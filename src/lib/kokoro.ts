@@ -128,12 +128,15 @@ export async function speak(text: string): Promise<string | null> {
     console.error('[jarvis] kokoro generation failed:', err)
     lastError = String((err as Error)?.message ?? err)
     failures++
-    if (failures >= MAX_FAILURES) {
+    const languageRegistryUnavailable = /Invalid language identifier/i.test(lastError)
+    if (languageRegistryUnavailable || failures >= MAX_FAILURES) {
       // Nothing else sets this on the generation path, so without it tts.ts
       // keeps routing every sentence here and every sentence keeps throwing.
       failed = true
       console.warn(
-        `[jarvis] kokoro failed ${failures} times running — the system voice from here on.`,
+        languageRegistryUnavailable
+          ? '[jarvis] kokoro phonemizer has no registered languages — using the speech fallback from here on.'
+          : `[jarvis] kokoro failed ${failures} times running — the system voice from here on.`,
       )
     }
     return null

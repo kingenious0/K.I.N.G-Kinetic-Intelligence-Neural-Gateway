@@ -33,7 +33,7 @@ import {
 } from './lib/brain'
 import { startAnalyser, micLevel } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
-import { env, BACKEND } from './config'
+import { env, BACKEND, STANDALONE } from './config'
 
 /**
  * The conversation.
@@ -479,10 +479,8 @@ export default function App() {
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
 
-    if (BACKEND === 'groq' && !env.groqKey) {
-      s.setError(
-        'No Groq API key — set VITE_GROQ_API_KEY in .env.local',
-      )
+    if (STANDALONE && !env.groqKey) {
+      s.setError('No Groq API key — set GROQ_API_KEY (Vercel) or VITE_GROQ_API_KEY (.env.local)')
     } else if (BACKEND === 'direct' && !env.anthropicKey) {
       s.setError(
         'No Anthropic API key — copy .env.example to .env.local and set VITE_ANTHROPIC_API_KEY.',

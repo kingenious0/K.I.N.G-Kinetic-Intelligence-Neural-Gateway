@@ -4,6 +4,13 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Vite only hands variables matching this prefix to `import.meta.env`, and
+  // the default is `VITE_`. The Groq engine is configured with the bare
+  // GROQ_API_KEY / GROQ_MODEL names so the same file can be read by a non-Vite
+  // consumer (a script, or the bridge), so both prefixes are listed here.
+  // Anything else — GITHUB_PERSONAL_ACCESS_TOKEN, DATABASE_URL, ELEVENLABS_API_KEY —
+  // keeps no GROQ_ prefix and therefore still never reaches the bundle.
+  envPrefix: ['VITE_', 'GROQ_'],
   server: {
     // Honour PORT so a second instance can run alongside the first. The bridge
     // only accepts sockets from localhost:5173-5199, so stay inside that range

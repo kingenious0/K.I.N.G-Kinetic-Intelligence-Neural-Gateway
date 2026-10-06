@@ -47,12 +47,77 @@ function flag(name: string, raw: unknown, fallback: boolean): boolean {
 }
 
 /**
+ * The secrets and per-machine knobs. Declared before BACKEND because BACKEND's
+ * default picks a brain by asking whether a Groq key exists — a `const` read
+ * before its initializer runs is a ReferenceError, not an `undefined`.
+ */
+export const env = {
+  anthropicKey: str(import.meta.env.VITE_ANTHROPIC_API_KEY) ?? '',
+  elevenKey: str(import.meta.env.VITE_ELEVENLABS_API_KEY) ?? '',
+  elevenVoiceId:
+    str(import.meta.env.VITE_ELEVENLABS_VOICE_ID) ?? 'JBFqnCBsd6RMkjVDRZzb',
+  porcupineKey: str(import.meta.env.VITE_PICOVOICE_ACCESS_KEY) ?? '',
+  /**
+   * The Groq key. A Vercel deployment sets the bare GROQ_API_KEY — the name
+   * Groq's own docs use, and the one a non-Vite consumer would read — while
+   * local .env files carry VITE_GROQ_API_KEY alongside it. Both are accepted
+   * so the same project works in either place without renaming anything.
+   *
+   * `envPrefix` in vite.config.ts is what makes the bare name visible here;
+   * without it Vite only exposes VITE_* and GROQ_API_KEY reads as undefined.
+   *
+   * This key is the one secret that does ship to the browser, and only in
+   * standalone mode, where there is no server to hold it. GITHUB_* and
+   * DATABASE_URL deliberately have no GROQ_ or VITE_ prefix, so they are
+   * outside envPrefix and can never reach the bundle.
+   */
+  groqKey: str(import.meta.env.VITE_GROQ_API_KEY) ?? str(import.meta.env.GROQ_API_KEY) ?? '',
+}
+
+export const GROQ_MODEL =
+  str(import.meta.env.VITE_GROQ_MODEL) ?? str(import.meta.env.GROQ_MODEL) ?? 'qwen/qwen3.8-27b'
+
+/**
+ * Used only when the primary model is rejected as unavailable. Groq retires
+ * model ids without warning — `qwen-2.5-32b` was the original choice here and
+ * is now "decommissioned and no longer supported" — and a dead id is the most
+ * likely cause of a deploy that worked yesterday failing today.
+ *
+ * `openai/gpt-oss-20b` is the nearest live equivalent: a dense ~20B chat model
+ * sitting in the same speed class as the 27B primary, rather than a much larger
+ * one that would answer noticeably slower. Checked against
+ * GET /openai/v1/models; there is no second Qwen on the platform.
+ */
+export const GROQ_MODEL_FALLBACK =
+  str(import.meta.env.VITE_GROQ_MODEL_FALLBACK) ?? 'openai/gpt-oss-20b'
+
+/** `claude-opus-5` is the strongest model; `claude-sonnet-5` trades a little
+ *  quality for lower latency if you find responses feel slow on camera. */
+export const MODEL = 'claude-opus-5'
+
+/**
+ * Fast mode runs the same Opus 5 at up to 2.5x output speed. It is a research
+ * preview on the Claude API and costs $10/$50 per Mtok instead of $5/$25.
+ * For a recorded demo the snappiness is worth it; flip to false to save money.
+ */
+export const FAST_MODE = true
+
+/**
  * Which brain to use.
+ *
+ *   'groq'   — the default whenever a Groq key is present. The browser talks
+ *              straight to Groq Cloud and everything runs on the page: Three.js
+ *              core, speech, inference. Deploy it to Vercel as a static site
+ *              and there is no backend to keep alive. The trade is that the
+ *              bridge-only tools (king_clone, king_deploy, the database) have
+ *              nowhere to run — see BRIDGE_OFFLINE below, which says so out
+ *              loud instead of throwing.
  *
  *   'bridge' — run `npm run bridge` alongside the app. Authenticates off your
  *              existing Claude Code login (no API key), and every MCP server in
  *              your Claude Code config is available to JARVIS, including local
- *              ones like higgsfield, elevenlabs, android and playwright.
+ *              ones like higgsfield, elevenlabs, android and playwright. This is
+ *              also the only path where clone/deploy and the database work.
  *
  *   'direct' — the browser calls the Claude API itself. Nothing to run and it
  *              deploys as a static site, but it needs VITE_ANTHROPIC_API_KEY in
@@ -62,8 +127,27 @@ export const BACKEND: 'bridge' | 'direct' | 'groq' = choice(
   'VITE_BACKEND',
   import.meta.env.VITE_BACKEND,
   ['bridge', 'direct', 'groq'] as const,
-  str(import.meta.env.VITE_GROQ_API_KEY) ? 'groq' : 'bridge',
+  env.groqKey ? 'groq' : 'bridge',
 )
+
+/**
+ * The two deployment shapes, and which one you are in.
+ *
+ * Standalone — VITE_BACKEND=groq. Nothing but this page. The HUD still lists
+ *   every capability it has, so it has to be honest about the ones that need a
+ *   machine behind them.
+ *
+ * Hybrid — VITE_BACKEND=bridge. The local (or Azure) bridge is in the loop and
+ *   the privileged tools are real.
+ */
+export const STANDALONE = BACKEND === 'groq'
+
+/**
+ * What K.I.N.G. says — and what a bridge-only tool call returns — when the
+ * bridge is not in the loop. One string so the prompt, the tool stubs and the
+ * HUD badge cannot drift apart.
+ */
+export const BRIDGE_OFFLINE = 'Bridge Offline / Standalone Mode'
 
 /**
  * Where the bridge lives. Derived once here rather than in each of the three
@@ -127,29 +211,6 @@ export const KOKORO_VOICE = choice(
   ['bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel'] as const,
   'bm_george',
 )
-
-export const env = {
-  anthropicKey: str(import.meta.env.VITE_ANTHROPIC_API_KEY) ?? '',
-  elevenKey: str(import.meta.env.VITE_ELEVENLABS_API_KEY) ?? '',
-  elevenVoiceId:
-    str(import.meta.env.VITE_ELEVENLABS_VOICE_ID) ?? 'JBFqnCBsd6RMkjVDRZzb',
-  porcupineKey: str(import.meta.env.VITE_PICOVOICE_ACCESS_KEY) ?? '',
-  groqKey: str(import.meta.env.VITE_GROQ_API_KEY) ?? '',
-}
-
-export const GROQ_MODEL =
-  str(import.meta.env.VITE_GROQ_MODEL) ?? 'qwen/qwen3.8-27b'
-
-/** `claude-opus-5` is the strongest model; `claude-sonnet-5` trades a little
- *  quality for lower latency if you find responses feel slow on camera. */
-export const MODEL = 'claude-opus-5'
-
-/**
- * Fast mode runs the same Opus 5 at up to 2.5x output speed. It is a research
- * preview on the Claude API and costs $10/$50 per Mtok instead of $5/$25.
- * For a recorded demo the snappiness is worth it; flip to false to save money.
- */
-export const FAST_MODE = true
 
 /**
  * Wake-word engine.
@@ -278,9 +339,13 @@ export const MCP_SERVERS: McpServer[] = [
 export const activeServers = () => MCP_SERVERS.filter((s) => s.enabled && s.url)
 
 /**
- * The persona for the browser-direct path only. The bridge carries its own,
- * fuller version in bridge/server.mjs — that's the one that gets used by
- * default, and the one worth editing.
+ * The persona for the browser paths — groq (standalone) and direct. The bridge
+ * carries its own, fuller version in bridge/server.mjs — that's the one that
+ * gets used by default, and the one worth editing.
+ *
+ * The closing block only appears when there is no bridge in the loop, because
+ * that is the configuration in which the model would otherwise promise a clone
+ * or a deploy it has no way to perform.
  */
 export const SYSTEM_PROMPT = `You are K.I.N.G. — Kinetic Intelligence & Neural Gateway, call sign "King". You are speaking out loud.
 
@@ -305,4 +370,16 @@ Using tools:
 - If a tool fails or isn't connected, one plain sentence saying so.
 - For anything outward-facing or destructive (sending mail, posting, paying,
   deleting) say exactly what you're about to do and wait for confirmation.
-- If you don't know, say you don't know.`
+- If you don't know, say you don't know.${
+  BACKEND === 'bridge'
+    ? ''
+    : `
+
+Standing by without a bridge:
+- Everything about this page is live: speech, the core, the interface, panels.
+- Cloning a repository, deploying, and reading the production database need a
+  machine running behind you, and there is none. Those calls return
+  "${BRIDGE_OFFLINE}".
+- Answer that in one plain sentence and move on. Never say an action ran when
+  it did not, and never invent a commit, a URL or a row.`
+}`

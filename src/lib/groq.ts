@@ -1,4 +1,4 @@
-import { env, GROQ_MODEL, SYSTEM_PROMPT } from '../config'
+import { env, GROQ_MODEL, GROQ_MODEL_FALLBACK, BRIDGE_OFFLINE, SYSTEM_PROMPT } from '../config'
 import type { AskHandlers } from './anthropic'
 import type { Panel } from '../store'
 
@@ -124,7 +124,83 @@ const UI_TOOLS = [
   },
 ]
 
+/**
+ * The privileged tools that live behind the bridge: cloning a repository,
+ * redeploying, and writing to the production database.
+ *
+ * A standalone build advertises them anyway. The alternative — leaving them
+ * out — is worse: the model then guesses at a capability it does not have, and
+ * either refuses something the user believes it can do or invents a commit
+ * that never happened. Advertising them and returning a plain, structured
+ * "bridge offline" result keeps the conversation honest without ever throwing.
+ */
+const BRIDGE_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'king_clone',
+      description: `Clone a git repository into the K.I.N.G. workspace. ${BRIDGE_OFFLINE} — runs on the bridge machine, never in the browser.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          repo: { type: 'string', description: 'Repository as owner/name or a full URL' },
+          branch: { type: 'string', description: 'Branch to check out. Default: the remote default.' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'king_deploy',
+      description: `Redeploy the site, dispatch a workflow, or reload the edge config. ${BRIDGE_OFFLINE} — runs on the bridge machine, never in the browser.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: 'vercel, github or nginx' },
+          repo: { type: 'string', description: 'Repository as owner/name' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'db_query',
+      description: `Run a read-only SQL statement against the production database (Supabase / Postgres). ${BRIDGE_OFFLINE} — the connection string never leaves the bridge.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          sql: { type: 'string', description: 'A SELECT statement. Writes are refused by the bridge.' },
+        },
+        required: ['sql'],
+      },
+    },
+  },
+]
+
+const BRIDGE_ONLY = new Set(BRIDGE_TOOLS.map((t) => t.function.name))
+
+/**
+ * The graceful answer. Returned as a tool result the model can read and pass
+ * on, rather than thrown as an exception the UI would have to catch — an
+ * uncaught rejection mid-answer is indistinguishable from a crash to the
+ * person waiting for a reply.
+ */
+function bridgeOfflineResult(name: string): string {
+  return JSON.stringify({
+    status: 'bridge_offline',
+    message: BRIDGE_OFFLINE,
+    tool: name,
+    detail:
+      'This build runs standalone, so there is no machine behind it to execute this. ' +
+      'Run `npm run bridge` and set VITE_BACKEND=bridge to enable it.',
+  })
+}
+
 function executeUiTool(name: string, rawArgs: string): string {
+  if (BRIDGE_ONLY.has(name)) return bridgeOfflineResult(name)
+
   let args: any = {}
   try {
     args = JSON.parse(rawArgs || '{}')
@@ -194,18 +270,21 @@ export async function ask(
 
   const apiKey = env.groqKey
   if (!apiKey) {
-    throw new Error('No Groq API key configured. Please set VITE_GROQ_API_KEY in .env.local.')
+    throw new Error(
+      'No Groq API key configured. Set GROQ_API_KEY (Vercel) or VITE_GROQ_API_KEY (.env.local).',
+    )
   }
 
   const usedTools: string[] = []
   let fullText = ''
+  let fallbackTried = false
 
   const messages: any[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...history.filter((m) => m.content && (m.role === 'user' || m.role === 'assistant')),
   ]
 
-  async function callApi(currentMessages: any[]): Promise<string> {
+  async function callApi(currentMessages: any[], model: string): Promise<string> {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -213,9 +292,9 @@ export async function ask(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: GROQ_MODEL,
+        model,
         messages: currentMessages,
-        tools: UI_TOOLS,
+        tools: [...UI_TOOLS, ...BRIDGE_TOOLS],
         tool_choice: 'auto',
         temperature: 0.6,
         max_tokens: 400,
@@ -233,7 +312,9 @@ export async function ask(
       } catch {
         if (errText) errMsg += `: ${errText}`
       }
-      throw new Error(errMsg)
+      const err = new Error(errMsg) as Error & { status?: number }
+      err.status = response.status
+      throw err
     }
 
     const reader = response.body?.getReader()
@@ -319,19 +400,48 @@ export async function ask(
           { role: 'assistant', content: null, tool_calls: toolCallMessages },
           ...toolResults,
         ]
-        return await callApi(nextMessages)
+        return await run(nextMessages)
       }
     }
 
     return fullText
   }
 
+  /**
+   * Primary model first, fallback once if Groq says that model does not exist.
+   *
+   * Groq retires and renames model ids without notice, so a hardcoded id is a
+   * time bomb rather than a configuration. Swapping once — and showing the swap
+   * on the tool badge — turns "the site is down" into a footnote. It is not a
+   * retry loop: a second failure is the real failure and it propagates.
+   */
+  async function run(currentMessages: any[]): Promise<string> {
+    try {
+      return await callApi(currentMessages, GROQ_MODEL)
+    } catch (err) {
+      if (fallbackTried || !isModelUnavailable(err)) throw err
+      fallbackTried = true
+      handlers.onTool(`model · ${GROQ_MODEL_FALLBACK}`)
+      return await callApi(currentMessages, GROQ_MODEL_FALLBACK)
+    }
+  }
+
   try {
-    const text = await callApi(messages)
+    const text = await run(messages)
     return { text: text.trim(), tools: usedTools }
   } finally {
     if (activeAbort === abortController) {
       activeAbort = null
     }
   }
+}
+
+/** 404 is the plain case; Groq also answers 400/410 with the reason in prose. */
+function isModelUnavailable(err: unknown): boolean {
+  const status = (err as { status?: number })?.status
+  if (status === 404 || status === 410) return true
+  const message = err instanceof Error ? err.message : ''
+  return /model_not_found|model.{0,20}not (found|supported|available)|does not exist|unknown model|decommissioned|invalid model id/i.test(
+    message,
+  )
 }

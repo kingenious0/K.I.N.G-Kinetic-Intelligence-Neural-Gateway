@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useStore, accentFor, type Phase } from '../store'
+import { STANDALONE, BRIDGE_OFFLINE } from '../config'
 import { Suggestions } from './Suggestions'
 import { BladeSweep, Blades } from './Blades'
 import { Effects } from './Effects'
@@ -159,6 +160,9 @@ const SYSTEM_LABELS: Record<string, string> = {
   jarvis_ui: 'Interface',
   jarvis_chrome: 'Browser',
   jarvis_eyes: 'Vision',
+  // Standalone builds report these instead of a bridge server list.
+  'groq-cloud': 'Groq Cloud',
+  'core-ui': 'Interface',
   github: 'GitHub',
   king_ops: 'Ops',
   postgres: 'Database',
@@ -251,6 +255,16 @@ export function Hud() {
             <span className="tick" />
             {writes ? 'WRITES ON' : 'READ ONLY'}
           </div>
+          {/* Standalone builds still list the privileged capabilities above, so
+              the rail says out loud which ones have no machine behind them.
+              Same string the tool stubs return, so the badge and the answer
+              the model gives can never contradict each other. */}
+          {STANDALONE && (
+            <div className="rail-item mono">
+              <span className="tick" />
+              {BRIDGE_OFFLINE}
+            </div>
+          )}
           <div className="rail-item">
             <span className="tick" />
             Web

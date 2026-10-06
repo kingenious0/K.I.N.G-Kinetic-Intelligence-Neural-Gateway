@@ -12,6 +12,14 @@
  * them apart is what stops the two from drifting into subtly different proxies
  * that behave differently in development and in production.
  *
+ * The specifier below ends in `.js` even though the file is `groqProxy.ts`, and
+ * that is not a typo: Vercel's builder compiles every traced `.ts` file and
+ * stores it under the `.js` name, leaving import specifiers untouched. Pointing
+ * at `groqProxy.ts` therefore names a file that does not exist in the deployed
+ * function and takes the whole endpoint down with MODULE_NOT_FOUND before the
+ * handler ever runs. `.js` is the spelling NodeNext resolves back to the `.ts`
+ * source at compile time, and the one Node can actually open at request time.
+ *
  *   GET  /api/chat  → { ok: true, hasKey: boolean }   a key probe, not a test
  *   POST /api/chat  → the Groq response, streamed through
  */
@@ -24,7 +32,7 @@ import {
   proxyChat,
   readProxyEnv,
   simpleJson,
-} from '../server/groqProxy.ts'
+} from '../server/groqProxy.js'
 
 /**
  * A local shape rather than `@vercel/node`. The package would only ever be

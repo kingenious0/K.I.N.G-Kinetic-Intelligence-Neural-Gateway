@@ -20,6 +20,8 @@ import {
   warm,
   interrupt,
   watchServers,
+  bridgeServers,
+  watchWrites,
   watchPanels,
   watchBlades,
   watchCapture,
@@ -31,7 +33,7 @@ import {
 } from './lib/brain'
 import { startAnalyser, micLevel } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
-import { env } from './config'
+import { env, BACKEND } from './config'
 
 /**
  * The conversation.
@@ -62,11 +64,11 @@ const newId = () =>
   `id${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
 
 /** The same mishearings voice.ts accepts for the wake word — otherwise a turn
- *  that woke him as "travis" gets that word sent on to the model as a question. */
-const NAME = '(?:jarvis|jarvys|jervis|travis|jarviss|java\'s|jarv)'
-/** A bare vocative — "Jarvis", "hey jarvis" — with nothing asked. */
+ *  that woke him as "kings" gets that word sent on to the model as a question. */
+const NAME = '(?:king|kings|kinh|kingh|kong|kingenious)'
+/** A bare vocative — "King", "hey king" — with nothing asked. */
 const BARE_NAME = new RegExp(`^(?:hey|hi|ok|okay|yo)?\\s*${NAME}[\\s,.!?]*$`, 'i')
-/** A leading vocative on a real command: "Jarvis, what's the weather". */
+/** A leading vocative on a real command: "King, what's the weather". */
 const LEADING_NAME = new RegExp(`^(?:hey|hi|ok|okay|yo)?\\s*${NAME}\\b[\\s,.:!?-]*`, 'i')
 
 export default function App() {
@@ -361,7 +363,21 @@ export default function App() {
 
     s.setPhase('boot')
 
-    watchServers((servers) => store.getState().setConnected(servers))
+    /**
+     * What the left rail shows.
+     *
+     * Two sources, and they overwrite each other if left to themselves. The
+     * bridge pushes linked MCP systems over the socket as they report in; the
+     * boot sequence pushes the backend label once the warm-up resolves.
+     * Whichever landed last used to win, so a ready frame arriving before the
+     * boot sequence finished was erased by it — the rail read "Claude" and
+     * nothing else, with GitHub sitting right there in the bridge. Merge both,
+     * always. `connectedLabels()` already delegates to `bridgeServers()` on the
+     * bridge path, so the Set is not defensive — the same names arrive twice.
+     */
+    const rail = () => [...new Set([...connectedLabels(), ...bridgeServers()])]
+    watchServers(() => store.getState().setConnected(rail()))
+    watchWrites((w) => store.getState().setWrites(w))
     watchPanels((panel) => store.getState().pushPanel(panel))
     watchBlades((blade) => store.getState().pushBlade(blade))
 
@@ -463,14 +479,18 @@ export default function App() {
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
 
-    if (!usingBridge && !env.anthropicKey) {
+    if (BACKEND === 'groq' && !env.groqKey) {
+      s.setError(
+        'No Groq API key — set VITE_GROQ_API_KEY in .env.local',
+      )
+    } else if (BACKEND === 'direct' && !env.anthropicKey) {
       s.setError(
         'No Anthropic API key — copy .env.example to .env.local and set VITE_ANTHROPIC_API_KEY.',
       )
     }
 
     // Pull the neural voice down during the boot sequence so the first
-    // "Hey Jarvis" isn't waiting on an 86MB download. Deliberately not awaited
+    // "Hey King" isn't waiting on an 86MB download. Deliberately not awaited
     // — if it's slow, JARVIS comes up on the system voice and swaps over the
     // moment the model is ready.
     if (TTS_ENGINE === 'kokoro') {
@@ -493,7 +513,7 @@ export default function App() {
     // still rising as the reactor lands.
     await new Promise((r) => setTimeout(r, 9200)) // boot sequence
     await warming
-    store.getState().setConnected(connectedLabels())
+    store.getState().setConnected(rail())
     store.getState().setVoice(currentVoiceName())
 
     // The analyser is what makes the reactor pulse with your voice. It needs a

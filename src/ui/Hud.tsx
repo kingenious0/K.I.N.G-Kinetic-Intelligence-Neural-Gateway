@@ -10,7 +10,7 @@ import { GestureGuide } from './GestureGuide'
 const statusText: Record<Phase, string> = {
   offline: 'OFFLINE',
   boot: 'INITIALISING',
-  dormant: 'STANDBY — SAY “HEY JARVIS”',
+  dormant: 'STANDBY — SAY “HEY KING”',
   waking: 'ONLINE',
   listening: 'LISTENING',
   thinking: 'PROCESSING',
@@ -146,12 +146,38 @@ function DecodeText({ text }: { text: string }) {
 
 /* --------------------------------------------------------------------- hud */
 
+/**
+ * What the bridge calls a system, in words a person reads.
+ *
+ * The rail shows raw MCP keys when there is no mapping — `jarvis_ui`,
+ * `king_ops`, `filesystem` — which are names from a config file, not a status
+ * readout. Anything unmapped falls through to its own key, so a server added
+ * later still appears; the map only ever improves the label.
+ */
+const SYSTEM_LABELS: Record<string, string> = {
+  jarvis: 'Display',
+  jarvis_ui: 'Interface',
+  jarvis_chrome: 'Browser',
+  jarvis_eyes: 'Vision',
+  github: 'GitHub',
+  king_ops: 'Ops',
+  postgres: 'Database',
+  supabase: 'Supabase',
+  chrome: 'Browser',
+  filesystem: 'Files',
+  fetch: 'Web fetch',
+  elevenlabs: 'ElevenLabs',
+}
+
+const systemLabel = (k: string) => SYSTEM_LABELS[k] ?? k
+
 export function Hud() {
   const phase = useStore((s) => s.phase)
   const caption = useStore((s) => s.caption)
   const turns = useStore((s) => s.turns)
   const activeTool = useStore((s) => s.activeTool)
   const connected = useStore((s) => s.connected)
+  const writes = useStore((s) => s.writes)
   const error = useStore((s) => s.error)
   const level = useStore((s) => s.level)
   const voice = useStore((s) => s.voice)
@@ -190,8 +216,8 @@ export function Hud() {
       <header className="hud-top">
         {ui.chrome.brand && (
           <div className="brand">
-            <span className="brand-mark">J.A.R.V.I.S.</span>
-            <span className="brand-sub">Just A Rather Very Intelligent System</span>
+            <span className="brand-mark">K.I.N.G</span>
+            <span className="brand-sub">Kinetic Intelligence &amp; Neural Gateway</span>
           </div>
         )}
 
@@ -207,7 +233,7 @@ export function Hud() {
         </div>
       </header>
 
-      {/* Left rail: which integrations are live */}
+      {/* Left rail: which integrations are live, and whether they can act */}
       {ui.chrome.systems && (
         <aside className="rail rail-left">
           <div className="rail-title">SYSTEMS</div>
@@ -215,9 +241,16 @@ export function Hud() {
           {connected.map((c) => (
             <div key={c} className="rail-item">
               <span className="tick" />
-              {c}
+              {systemLabel(c)}
             </div>
           ))}
+          {/* Read-only is the default, so it is stated rather than implied. A
+              rail full of linked systems with no note about mode invites the
+              question "can it actually do that?" — better to answer it here. */}
+          <div className={`rail-item mono ${writes ? '' : 'dim'}`}>
+            <span className="tick" />
+            {writes ? 'WRITES ON' : 'READ ONLY'}
+          </div>
           <div className="rail-item">
             <span className="tick" />
             Web
@@ -273,7 +306,7 @@ export function Hud() {
                 exit={{ opacity: 0 }}
                 transition={{ type: 'spring', stiffness: 320, damping: 32 }}
               >
-                <span className="log-who">{t.role === 'user' ? 'YOU' : 'JARVIS'}</span>
+                <span className="log-who">{t.role === 'user' ? 'YOU' : 'K.I.N.G.'}</span>
                 {/* Only his half decodes. What the user said was never
                     transmitted from anywhere — dressing it up as machine
                     output would be a lie about where the words came from. */}
@@ -312,7 +345,7 @@ export function Hud() {
 
       <footer className="hud-bottom">
         <span className="hint">
-          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>G</kbd> hands
+          say <b>“hey king”</b> · <kbd>Space</kbd> to talk · <kbd>G</kbd> hands
           {voice && (
             <>
               {' · '}

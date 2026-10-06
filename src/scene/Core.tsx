@@ -2,6 +2,7 @@ import { useRef, useMemo } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Drive } from './Scene'
+import { KING_UNIFORMS } from '../lib/theme'
 
 /**
  * The reactor.
@@ -216,6 +217,10 @@ const RING_R = 0.74
  */
 const FIT = 0.60
 
+/** Scratch targets for the per-frame colour lerps — allocated once, never per frame. */
+const WHITE = new THREE.Color('#ffffff')
+const hot = new THREE.Color()
+
 export function Core({ drive }: { drive: Drive }) {
   const mat = useRef<THREE.ShaderMaterial>(null)
   const mesh = useRef<THREE.Mesh>(null)
@@ -223,10 +228,11 @@ export function Core({ drive }: { drive: Drive }) {
 
   const uniforms = useMemo(
     () => ({
-      uColor: { value: new THREE.Color('#19c4c4') },
-      // Not white — a tinted highlight keeps the hue readable once bloom
-      // stacks on top, instead of washing the ring out to a grey band.
-      uHot: { value: new THREE.Color('#c9fdff') },
+      // Imperial Amber Gold. PRD's u_coreColor.
+      uColor: { value: new THREE.Color(KING_UNIFORMS.u_coreColor) },
+      // Radiant Solar Gold — a tinted highlight, never white: white washes the
+      // ring to a grey band once bloom stacks on top of it. PRD's u_coronaColor.
+      uHot: { value: new THREE.Color(KING_UNIFORMS.u_coronaColor) },
       uLevel: { value: 0 },
       uPhase: { value: 0 },
       uOpen: { value: 0 },
@@ -264,6 +270,13 @@ export function Core({ drive }: { drive: Drive }) {
     u.uIntensity.value = r.intensity
     u.uStyle.value = r.style
     ;(u.uColor.value as THREE.Color).lerp(r.color, Math.min(1, dt * 2.5))
+    // The highlight tracks the body rather than sitting on a fixed gold: at
+    // rest the body is Imperial Gold and the highlight resolves to Solar Gold
+    // (the same lerp, 0.55 toward white — within a hair of #FFE28A), and when
+    // a tool call surges the ring violet the highlight goes with it instead of
+    // leaving a gold rim on a violet core.
+    hot.copy(r.color).lerp(WHITE, 0.55)
+    ;(u.uHot.value as THREE.Color).lerp(hot, Math.min(1, dt * 2.5))
   })
 
   return (

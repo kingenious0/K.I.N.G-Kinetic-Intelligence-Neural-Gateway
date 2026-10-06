@@ -58,11 +58,11 @@ function flag(name: string, raw: unknown, fallback: boolean): boolean {
  *              deploys as a static site, but it needs VITE_ANTHROPIC_API_KEY in
  *              the bundle and only reaches remote HTTP MCP servers.
  */
-export const BACKEND: 'bridge' | 'direct' = choice(
+export const BACKEND: 'bridge' | 'direct' | 'groq' = choice(
   'VITE_BACKEND',
   import.meta.env.VITE_BACKEND,
-  ['bridge', 'direct'] as const,
-  'bridge',
+  ['bridge', 'direct', 'groq'] as const,
+  str(import.meta.env.VITE_GROQ_API_KEY) ? 'groq' : 'bridge',
 )
 
 /**
@@ -134,7 +134,11 @@ export const env = {
   elevenVoiceId:
     str(import.meta.env.VITE_ELEVENLABS_VOICE_ID) ?? 'JBFqnCBsd6RMkjVDRZzb',
   porcupineKey: str(import.meta.env.VITE_PICOVOICE_ACCESS_KEY) ?? '',
+  groqKey: str(import.meta.env.VITE_GROQ_API_KEY) ?? '',
 }
+
+export const GROQ_MODEL =
+  str(import.meta.env.VITE_GROQ_MODEL) ?? 'qwen/qwen3.8-27b'
 
 /** `claude-opus-5` is the strongest model; `claude-sonnet-5` trades a little
  *  quality for lower latency if you find responses feel slow on camera. */
@@ -149,11 +153,13 @@ export const FAST_MODE = true
 
 /**
  * Wake-word engine.
- *   'speech'    — zero setup, uses the browser's SpeechRecognition to listen for
- *                 "hey jarvis". Chrome/Edge only, audio goes to Google.
- *   'porcupine' — recommended. Runs offline in WASM, "Jarvis" is a built-in
- *                 keyword, far fewer false triggers. Needs a free AccessKey
- *                 from console.picovoice.ai.
+ *   'speech'    — the default. Uses the browser's SpeechRecognition to listen
+ *                 for "hey king". Chrome/Edge only, audio goes to Google.
+ *   'porcupine' — opt-in, offline WASM detection. Its only built-in keyword is
+ *                 "Jarvis", which is NOT the K.I.N.G. call sign, so this stays
+ *                 off unless a custom "Hey King" .ppn keyword is trained at
+ *                 console.picovoice.ai and wired in. Until then, enabling it
+ *                 would listen for the wrong name and never wake.
  */
 export const WAKE_ENGINE: 'speech' | 'porcupine' = env.porcupineKey
   ? 'porcupine'
@@ -276,12 +282,11 @@ export const activeServers = () => MCP_SERVERS.filter((s) => s.enabled && s.url)
  * fuller version in bridge/server.mjs — that's the one that gets used by
  * default, and the one worth editing.
  */
-export const SYSTEM_PROMPT = `You are JARVIS, Tony Stark's assistant. You are speaking out loud.
+export const SYSTEM_PROMPT = `You are K.I.N.G. — Kinetic Intelligence & Neural Gateway, call sign "King". You are speaking out loud.
 
 THE HARD RULE: your entire reply must be under 60 words. This is not a style
 preference — every word is read aloud by a speech synthesiser and the user is
-waiting in silence while it plays. A four-paragraph answer is a failure, however
-good the content. If a question genuinely needs more, give the headline in two
+waiting in silence while it plays. If a question genuinely needs more, give the headline in two
 sentences and offer the detail: "There's more if you want it."
 
 Voice:
@@ -294,9 +299,8 @@ Voice:
 
 Using tools:
 - You have live tools. Use them rather than guessing.
-- Never narrate that you're about to use one. No "Let me search for that" or
-  "I'll check that now" — go silent, use it, then answer. The user sees a
-  spinner; they don't need commentary.
+- If the user asks to change the theme, colors, reactor appearance or trigger glitch/scan effects, use your UI tools (ui_reactor, ui_theme, ui_effect, ui_reset, display_panel).
+- Never narrate that you're about to use one. No "Let me do that" - just use it and speak naturally.
 - Never speak a URL, ID or raw JSON aloud unless asked. Summarise.
 - If a tool fails or isn't connected, one plain sentence saying so.
 - For anything outward-facing or destructive (sending mail, posting, paying,

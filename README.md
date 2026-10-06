@@ -1,7 +1,7 @@
-# J.A.R.V.I.S.
+# K.I.N.G
 
-A browser voice assistant with an Iron Man holographic interface. Say
-**"Hey Jarvis"**, he wakes, listens, and does real things through your tools —
+A browser voice command station with an obsidian-and-gold holographic interface.
+Say **"Hey King"**, he wakes, listens, and does real things through your tools —
 searches the web, generates images, drives your phone, reads your mail. The face
 is a web page (React + Vite + Three.js + custom GLSL). The brain is Claude Code,
 run headless as a library.
@@ -49,7 +49,7 @@ npm install
 npm start          # runs the brain and the face together
 ```
 
-Then open the URL it prints (http://localhost:5173) in **Chrome**, click **INITIALISE**, and say **“Hey Jarvis”**.
+Then open the URL it prints (http://localhost:5173) in **Chrome**, click **INITIALISE**, and say **“Hey King”**.
 
 Prefer two terminals? Run them separately instead:
 
@@ -75,7 +75,7 @@ Then open the app in a **real Chrome or Edge window**:
 open http://localhost:5173
 ```
 
-Click **INITIALISE**, allow the microphone when asked, and say **"Hey Jarvis"**.
+Click **INITIALISE**, allow the microphone when asked, and say **"Hey King"**.
 
 > It has to be a real browser window. Embedded preview panes block the
 > microphone, so JARVIS will look perfectly alive and simply never respond.
@@ -89,7 +89,7 @@ the brain and the hands.
 
 ```
   ┌─ browser (the face) ───────────────┐        ┌─ bridge (the brain) ─────────────┐
-  │  "Hey Jarvis" wake word            │        │  Node · bridge/server.mjs        │
+  │  "Hey King" wake word              │        │  Node · bridge/server.mjs        │
   │  local VAD  →  speech to text      │   ws   │  Claude Agent SDK                │
   │  reactor UI (Three.js + GLSL)      │◄─────► │   = Claude Code, headless        │
   │  text to speech                    │  8787  │  spawns your MCP servers         │
@@ -155,10 +155,10 @@ on what you have installed, that is roughly:
 
 A few things you can say:
 
-- *"What's happening in AI this week?"*
-- *"Generate an image of the Mark VII suit."*
-- *"Take a screenshot of my phone."*
-- *"Open my GitHub notifications."*
+- _"What's happening in AI this week?"_
+- _"Generate an image of the Mark VII suit."_
+- _"Take a screenshot of my phone."_
+- _"Open my GitHub notifications."_
 
 > **Note on account connectors.** Servers you added through your **claude.ai
 > account** are not stored on disk, so the bridge cannot see them — it works from
@@ -176,7 +176,7 @@ He drives the UI through MCP tools the bridge exposes:
 - `ui_screen` — clear
 - `ui_reset` — back to defaults
 
-So *"make it red, hide the systems list, put that render in orbit"* is a spoken
+So _"make it red, hide the systems list, put that render in orbit"_ is a spoken
 command.
 
 ### The heads-up display
@@ -193,15 +193,15 @@ chose.
 
 ## Controls
 
-| Key / phrase | Does |
-|---|---|
-| **"Hey Jarvis"** | Wake him |
-| **Space** | Talk without the wake word |
-| Just speak | Interrupt him mid-sentence (barge-in) |
-| **V** | Cycle the browser voice |
-| **Escape** | Stand down |
-| **D** | Live diagnostics panel |
-| **T** | One-line audio self-test |
+| Key / phrase     | Does                                  |
+| ---------------- | ------------------------------------- |
+| **"Hey King"**    | Wake him                              |
+| **Space**        | Talk without the wake word            |
+| Just speak       | Interrupt him mid-sentence (barge-in) |
+| **V**            | Cycle the browser voice               |
+| **Escape**       | Stand down                            |
+| **D**            | Live diagnostics panel                |
+| **T**            | One-line audio self-test              |
 
 ---
 
@@ -209,7 +209,7 @@ chose.
 
 Power-up plays a four-beat Iron Man start-up (`src/ui/Boot.tsx`): an
 "INITIATING SYSTEM" status bar with a segmented progress bar and boot log; then
-concentric reticle rings resolving into "J.A.R.V.I.S"; then a suit schematic;
+concentric reticle rings resolving into "K . I . N . G ."; then a suit schematic;
 then the triangular arc reactor lighting up — with a start-up sound under it
 (`public/audio/boot-music.mp3`).
 
@@ -222,28 +222,28 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 
 ### Bridge
 
-| Variable | Default | Effect |
-|---|---|---|
-| `JARVIS_BRIDGE_PORT` | `8787` | Port for the WebSocket + HTTP endpoints |
-| `JARVIS_MODEL` | `claude-opus-5` | Model to run |
-| `JARVIS_EFFORT` | `medium` | Reasoning effort |
-| `JARVIS_ALLOW_WRITES` | off | `1` allows effectful tools (see below) |
-| `JARVIS_ALLOWED_ORIGINS` | local dev | Extra WebSocket origins to accept |
-| `JARVIS_ALLOW_NO_ORIGIN` | off | Accept connections with no `Origin` header |
-| `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
-| `JARVIS_VOICE_ID` | — | ElevenLabs voice id |
-| `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
+| Variable                 | Default         | Effect                                          |
+| ------------------------ | --------------- | ----------------------------------------------- |
+| `JARVIS_BRIDGE_PORT`     | `8787`          | Port for the WebSocket + HTTP endpoints         |
+| `JARVIS_MODEL`           | `claude-opus-5` | Model to run                                    |
+| `JARVIS_EFFORT`          | `medium`        | Reasoning effort                                |
+| `JARVIS_ALLOW_WRITES`    | off             | `1` allows effectful tools (see below)          |
+| `JARVIS_ALLOWED_ORIGINS` | local dev       | Extra WebSocket origins to accept               |
+| `JARVIS_ALLOW_NO_ORIGIN` | off             | Accept connections with no `Origin` header      |
+| `JARVIS_FILE_ROOTS`      | —               | Roots the `/file` endpoint may serve from       |
+| `JARVIS_VOICE_ID`        | —               | ElevenLabs voice id                             |
+| `ELEVENLABS_API_KEY`     | —               | Optional; enables the ElevenLabs voice + Scribe |
 
 ### Frontend (`.env.local`)
 
-| Variable | Effect |
-|---|---|
-| `VITE_BACKEND` | `bridge` (default) or `direct` |
-| `VITE_BRIDGE_URL` | Where to reach the bridge |
-| `VITE_TTS_ENGINE` | `system` or `kokoro` |
-| `VITE_KOKORO_VOICE` | Voice for the Kokoro engine |
-| `VITE_USE_ELEVENLABS` | Force the ElevenLabs voice on |
-| `VITE_ANTHROPIC_API_KEY` | Direct mode only |
+| Variable                 | Effect                         |
+| ------------------------ | ------------------------------ |
+| `VITE_BACKEND`           | `bridge` (default) or `direct` |
+| `VITE_BRIDGE_URL`        | Where to reach the bridge      |
+| `VITE_TTS_ENGINE`        | `system` or `kokoro`           |
+| `VITE_KOKORO_VOICE`      | Voice for the Kokoro engine    |
+| `VITE_USE_ELEVENLABS`    | Force the ElevenLabs voice on  |
+| `VITE_ANTHROPIC_API_KEY` | Direct mode only               |
 
 ### Adding an ElevenLabs key
 
@@ -274,8 +274,8 @@ way instead:
 npm run bridge:writes
 ```
 
-> Read `decideTool()` before you do. *"Hey Jarvis, clean up my downloads folder"*
-> means something rather different with writes enabled.
+> Read `decideTool()` before you do. _"Hey King, clone the monorepo into my
+> workspace"_ means something rather different with writes enabled.
 
 ---
 

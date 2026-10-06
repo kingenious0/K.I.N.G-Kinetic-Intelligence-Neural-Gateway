@@ -35,6 +35,7 @@ type Frame = {
   seconds?: number
   when?: string
   servers?: Array<string | { name?: string }>
+  writes?: boolean
 }
 
 /** Every question gets an id so its answer can be told from anyone else's. */
@@ -47,11 +48,26 @@ let connecting: Promise<WebSocket> | null = null
 let servers: string[] = []
 export const bridgeServers = () => servers
 
+/**
+ * Whether the bridge permits effectful tools (shell, files, clone, deploy).
+ *
+ * Sent alongside the server list because the two answer different questions:
+ * "which integrations are linked" and "can this station actually act". A
+ * read-only station that looks armed is the failure mode worth guarding.
+ */
+let writes = false
+export const bridgeWrites = () => writes
+
 /** The list arrives twice — once from config, once with live status — so the
  *  HUD subscribes rather than reading it a single time at boot. */
 let onServers: ((s: string[]) => void) | null = null
 export function watchServers(fn: (s: string[]) => void) {
   onServers = fn
+}
+
+let onWrites: ((w: boolean) => void) | null = null
+export function watchWrites(fn: (w: boolean) => void) {
+  onWrites = fn
 }
 
 /** Panels arrive out of band — they're pushed while a turn is in flight,
@@ -169,13 +185,21 @@ function dispatch(ws: WebSocket) {
     }
 
     if (msg.type === 'ready') {
-      // The bridge announces immediately on connect from Claude Code's config,
-      // then again with live status once the agent initialises. Keep listening
-      // so the later, more accurate list wins.
-      servers = (msg.servers ?? [])
+      // The bridge announces immediately on connect with the servers it has
+      // wired up in-process, then again with live status once the agent
+      // initialises. Keep listening so the later, more accurate list wins.
+      const next = (msg.servers ?? [])
         .map((s) => (typeof s === 'string' ? s : (s.name ?? '')))
         .filter(Boolean)
+      // Merge rather than replace: the init frame lists what the SDK
+      // connected, which is a subset of what the session registered, so a
+      // straight overwrite can make a linked system vanish from the rail.
+      servers = [...new Set([...servers, ...next])]
       onServers?.(servers)
+      if (typeof msg.writes === 'boolean' && msg.writes !== writes) {
+        writes = msg.writes
+        onWrites?.(writes)
+      }
       firstReady.resolve()
     } else if (msg.type === 'panel' && msg.panel) {
       onPanel?.(msg.panel)
@@ -287,7 +311,7 @@ function connect(): Promise<WebSocket> {
   return connecting
 }
 
-/** Open the socket early so the first "Hey Jarvis" isn't waiting on a handshake. */
+/** Open the socket early so the first "Hey King" isn't waiting on a handshake. */
 export async function warmBridge(): Promise<void> {
   await connect()
   // Don't block startup if the bridge never announces — the dispatcher fills

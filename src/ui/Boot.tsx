@@ -5,10 +5,10 @@ import { useStore } from '../store'
 /**
  * The start-up sequence, rebuilt to the Iron Man boot it is quoting.
  *
- * Four beats, in order, cyan on black:
+ * Four beats, in order, gold on obsidian:
  *   1. an angular status bar — "INITIATING SYSTEM" — over a scrolling boot log,
  *      with a segmented bar filling left to right;
- *   2. concentric reticle rings assembling inward until "J.A.R.V.I.S" resolves
+ *   2. concentric reticle rings assembling inward until "K . I . N . G ." resolves
  *      at the centre;
  *   3. the suit schematic — a wireframe figure with component call-outs;
  *   4. the triangular arc reactor lighting from a dim outline to full glow,
@@ -24,12 +24,12 @@ import { useStore } from '../store'
 const T = { rings: 2600, suit: 5200, reactor: 7200 }
 
 const LOG = [
-  'MOUNT F:/BACKUP/GHOST (HIDDEN)',
+  'MOUNT K:/NEURAL/GATEWAY (PRIME)',
   'EXTEND SYSTEM MEMORY .......... OK',
-  'TELEMETRY / COMP CLIMATION',
-  'REMOVE SYSTEM CONFIGURATION',
+  'TELEMETRY / CORE CLIMATION',
+  'LOAD KINGENIOUS CONFIGURATION',
   'CHECKSUM ...................... OK',
-  'RUN SYSTEM TOOL',
+  'SPIN UP NEURAL GATEWAY',
 ]
 
 type Stage = 'bar' | 'rings' | 'suit' | 'reactor'
@@ -142,11 +142,11 @@ function Rings({ reduced }: { reduced: boolean }) {
         x="0"
         y="6"
         className="boot-name"
-        initial={reduced ? { opacity: 1 } : { opacity: 0, letterSpacing: '1.4em' }}
-        animate={{ opacity: 1, letterSpacing: '0.42em' }}
+        initial={reduced ? { opacity: 1 } : { opacity: 0, letterSpacing: '0.9em' }}
+        animate={{ opacity: 1, letterSpacing: '0.18em' }}
         transition={{ duration: 0.7, delay: 0.5, ease }}
       >
-        J.A.R.V.I.S
+        K . I . N . G .
       </motion.text>
     </svg>
   )

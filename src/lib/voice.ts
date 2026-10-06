@@ -65,20 +65,20 @@ export type Voice = {
 const WAKE_DEBOUNCE = 1500
 
 /**
- * His name, and the only wake phrase.
+ * The call sign, and the only wake phrase: "Hey King", "King", "Yo King".
  *
  * The optional prefix is genuinely optional: addressing him by name alone is
- * correct, and during an answer "Jarvis" on its own is the natural way to cut
- * in. The negative lookahead keeps possessives ("Jarvis's job") from waking him.
+ * correct, and during an answer "King" on its own is the natural way to cut
+ * in. The negative lookahead keeps possessives ("King's job") from waking him.
  *
- * The alternates are not padding. "Jarvis" is not in a general dictation
- * model's high-frequency vocabulary, and Chrome routinely returns Travis,
- * Jervis, Jarvys or Java's for a perfectly clear utterance — every one of which
+ * The alternates are not padding. Dictation models return "Kings", "Kong",
+ * "Kinh" or "Kingenious" for a perfectly clear utterance — every one of which
  * used to be silently discarded, so the wake word "just didn't work" with no
- * indication why. Better a rare false wake than a name that does not answer.
+ * indication why. Better a rare false wake than a call sign that does not
+ * answer. "kingenious" is the parent brand, accepted deliberately.
  */
 const WAKE =
-  /\b(?:hey|hi|ok|okay|yo)?\s*(?:jarvis|jarvys|jervis|jarvis's|travis|jarviss|java's|jarv)\b(?!'s)/i
+  /\b(?:hey|hi|ok|okay|yo)?\s*(?:king|kings|kinh|kingh|kong|kingenious|king's)\b(?!'s)/i
 
 /** Everything after the wake phrase, which is usually the actual command. */
 function afterWake(text: string): string {
@@ -267,7 +267,7 @@ const norm = (s: string) =>
  * would be the single most infuriating failure this file could have.
  */
 const OVERRIDE =
-  /\b(stop|wait|jarvis|cancel|enough|quiet|hold on|shut up|never ?mind|forget it|no)\b/i
+  /\b(stop|wait|king|cancel|enough|quiet|hold on|shut up|never ?mind|forget it|no)\b/i
 
 /**
  * Words too common to be evidence of anything.

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { BONES, INDEX_TIP, THUMB_TIP, TIPS, WRIST, diag, hands } from '../lib/hands'
+import { KING_THEME } from '../lib/theme'
 
 /**
  * Your hands, drawn on the glass.
@@ -73,7 +74,7 @@ export function Pointer() {
     const accentOf = () => {
       const hud = document.querySelector('.hud') as HTMLElement | null
       const c = hud && getComputedStyle(hud).getPropertyValue('--accent').trim()
-      return c || '#19c4c4'
+      return c || KING_THEME.accent
     }
 
     const draw = () => {

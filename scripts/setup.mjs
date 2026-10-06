@@ -105,12 +105,12 @@ if (elSource) {
 
 // --- How to run ----------------------------------------------------------
 console.log('');
-console.log('To run JARVIS, open two terminals:');
+console.log('To run K.I.N.G., open two terminals:');
 console.log('  1)  npm run bridge      # the brain (Claude Code, headless)');
 console.log('  2)  npm run dev         # the face (open http://localhost:5173 in Chrome)');
 console.log('');
-console.log('Then click INITIALISE and say "Hey Jarvis".');
-console.log('To let JARVIS take real actions (phone, browser, sending), run `npm run bridge:writes` instead of `npm run bridge`.');
+console.log('Then click INITIALISE and say "Hey King".');
+console.log('To let K.I.N.G. take real actions (phone, browser, sending), run `npm run bridge:writes` instead of `npm run bridge`.');
 console.log('');
 
 process.exit(0);

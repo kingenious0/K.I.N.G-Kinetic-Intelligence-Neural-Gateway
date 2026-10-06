@@ -2,6 +2,7 @@ import { useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { Drive } from './Scene'
+import { KING_THEME } from '../lib/theme'
 
 /**
  * A shell of points around the core. Each one drifts on its own orbit and gets
@@ -97,7 +98,7 @@ export function Particles({ drive }: { drive: Drive }) {
       uTime: { value: 0 },
       uLevel: { value: 0 },
       uSize: { value: 3.4 },
-      uColor: { value: new THREE.Color('#00e5ff') },
+      uColor: { value: new THREE.Color(KING_THEME.accent) },
       uIntensity: { value: 1 },
     }),
     [],

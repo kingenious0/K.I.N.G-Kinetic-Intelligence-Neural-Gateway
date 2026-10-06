@@ -342,13 +342,13 @@ function toReader(html, pageUrl, bridgeOrigin) {
   .rd-h { font-size: 16px; color:#eafcff; margin: 22px 0 8px; font-weight:600; }
   .rd-p { margin: 0 0 14px; }
   .rd-li { margin: 0 0 7px 18px; }
-  .rd-q { margin: 16px 0; padding-left: 14px; border-left: 2px solid #19c4c4;
+  .rd-q { margin: 16px 0; padding-left: 14px; border-left: 2px solid #ffb703;
           color:#9fdbe2; font-style: italic; }
   img { max-width:100%; height:auto; display:block; border-radius:4px;
         margin: 14px 0; }
   .rd-lead { margin-bottom: 18px; }
   ::-webkit-scrollbar { width: 9px; }
-  ::-webkit-scrollbar-thumb { background: #19c4c455; border-radius: 9px; }
+  ::-webkit-scrollbar-thumb { background: #ffb70355; border-radius: 9px; }
 </style></head><body>
 <div class="rd-src">${escape(host)}</div>
 <h1 class="rd-title">${escape(title)}</h1>
@@ -375,7 +375,7 @@ function toLive(html, pageUrl) {
   const injected =
     `<base href="${escape(pageUrl)}">` +
     '<style>html{background:#06101a;color-scheme:dark}' +
-    '::-webkit-scrollbar{width:9px}::-webkit-scrollbar-thumb{background:#19c4c455;border-radius:9px}</style>'
+    '::-webkit-scrollbar{width:9px}::-webkit-scrollbar-thumb{background:#ffb70355;border-radius:9px}</style>'
   if (/<head\b[^>]*>/i.test(out)) {
     out = out.replace(/<head\b[^>]*>/i, (h) => `${h}${injected}`)
   } else {

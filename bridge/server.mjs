@@ -21,6 +21,8 @@ import { displayServer } from './panels.mjs'
 import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
+import { opsServer } from './ops.mjs'
+import { githubServer } from './gh.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -175,6 +177,55 @@ function configuredServers() {
 
 const MCP_SERVERS = configuredServers()
 
+/**
+ * `king_clone` and `king_deploy`, which exist only when JARVIS_ALLOW_WRITES=1.
+ *
+ * Returns an empty object rather than a server with no tools, for the same
+ * reason postgresServers() does: an entry the model can see but never call is
+ * worse than no entry, and it puts "Ops" on the HUD for a station that cannot
+ * clone or deploy anything.
+ */
+function opsServers() {
+  if (!ALLOW_WRITES) return {}
+  return { king_ops: opsServer({ allowWrites: ALLOW_WRITES }) }
+}
+
+const OPS_SERVERS = opsServers()
+
+/**
+ * Supabase/Postgres, built from the environment rather than from a config file.
+ *
+ * Three URIs are honoured, in order of precedence, because Supabase hands out
+ * two pooler endpoints that behave differently under load and a deployment
+ * usually has both lying around:
+ *
+ *   SUPABASE_SESSION_DB_URL      session pooler, port 5432 — prepared
+ *                                statements, right for interactive queries
+ *   SUPABASE_TRANSACTION_DB_URL  transaction pooler, port 6543 — no prepared
+ *                                statements, right for serverless/lambda
+ *   DATABASE_URL                 the generic name everything else uses
+ *
+ * Returns an empty object when none is set, so a machine with no database
+ * contributes nothing to the mcpServers map and the model never sees a
+ * `postgres` tool that can only fail. That matters: an advertised tool that
+ * errors costs a turn, and an infrastructure check that dies on its own
+ * database is worse than one that reports the database as absent.
+ */
+function postgresServers() {
+  const url =
+    process.env.SUPABASE_SESSION_DB_URL ??
+    process.env.SUPABASE_TRANSACTION_DB_URL ??
+    process.env.DATABASE_URL ??
+    null
+  if (!url) return {}
+  return {
+    postgres: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-postgres', url],
+    },
+  }
+}
+
 /** MCP tools arrive as `mcp__<server>__<tool>`. */
 const mcpServerOf = (toolName) =>
   toolName.startsWith('mcp__') ? toolName.split('__')[1] : null
@@ -252,7 +303,43 @@ const VETO_EXEMPT = new Set([
   'openrouter__send-feedback',
 ])
 
-function decideTool(name) {
+/**
+ * Whether a SQL statement changes the database.
+ *
+ * Deliberately narrow. This gate decides whether a statement may run at all, so
+ * a miss costs a real mutation against production, while a false positive only
+ * makes the model rephrase. Comments are stripped first so a line beginning
+ * `-- drop` cannot be mistaken for the statement, then the statement is
+ * classified by its leading keyword, with `WITH` resolved to whatever its body
+ * does — a common table expression is a read far more often than not, but its
+ * body can write.
+ *
+ * An empty statement reads as a no-op, and a keyword that is none of these
+ * reads as a read: `SELECT` is the overwhelming case, and a gate that refused
+ * every statement it could not classify would take the tool away entirely.
+ *
+ * A `WITH` is judged by searching the whole body rather than by position.
+ * Position would be tidier, but a CTE body can itself contain an insert
+ * (`WITH x AS (INSERT ... RETURNING *) SELECT`), and the statement it is
+ * attached to can follow the closing paren. Over-blocking a read shaped like
+ * that costs one rephrased question; missing it costs a write against prod.
+ */
+const SQL_WRITE =
+  /^(?:explain\s+(?:analyze\s+|verbose\s+)*)?(?:insert|update|delete|drop|alter|truncate|create|grant|revoke|merge|call|do|vacuum|reindex|cluster|comment|set|reset|copy|lock|refresh)\b/i
+
+const SQL_CTE_WRITE = /\b(?:insert|update|delete|merge)\b/i
+
+function sqlWrites(sql) {
+  const body = String(sql ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n]*/g, ' ')
+    .trim()
+  if (!body) return false
+  if (SQL_WRITE.test(body)) return true
+  return /^\s*with\b/i.test(body) ? SQL_CTE_WRITE.test(body) : false
+}
+
+function decideTool(name, input) {
   if (READ_ONLY_BUILTINS.has(name)) return true
   if (WRITE_BUILTINS.has(name)) return ALLOW_WRITES
 
@@ -279,6 +366,33 @@ function decideTool(name) {
     // indicator the user can see for as long as it is live.
     if (server === 'jarvis_eyes') return true
 
+    // K.I.N.G.'s execution workspace: git clone, Vercel redeploy, GitHub
+    // Actions dispatch, pm2 restart, nginx reload. Every tool on it changes
+    // something outside this process, so the whole server rides on the write
+    // gate rather than being read verb by verb — `king_clone` contains no
+    // effectful verb at all and would otherwise have slipped through on a
+    // default it did not deserve.
+    if (server === 'king_ops') return ALLOW_WRITES
+
+    // The production database. The tool is called `query` — a read verb — so
+    // the verb rules below would wave through `DELETE FROM users` without ever
+    // looking at it. The statement itself is the only honest signal available,
+    // so it is read here rather than inferred from a name chosen for the 99%
+    // case.
+    //
+    // `sql` is what @modelcontextprotocol/server-postgres actually declares;
+    // `query` is accepted beside it because that is the name the schema and
+    // every wrapper calls the field, and a gate keyed on one spelling silently
+    // passes everything if a fork renames it. An absent statement is a no-op.
+    //
+    // This is the second layer, not the first: that server opens every session
+    // with `BEGIN TRANSACTION READ ONLY`, so a write reaching it fails at the
+    // database even if this gate were to let it through.
+    if (server === 'postgres') {
+      const sql = input?.sql ?? input?.query ?? ''
+      return !sqlWrites(sql) ? true : ALLOW_WRITES
+    }
+
     const tool = mcpToolOf(name)
     if (EFFECTFUL_VERB.test(tool) && !VETO_EXEMPT.has(`${server}__${tool}`)) {
       return ALLOW_WRITES
@@ -290,7 +404,14 @@ function decideTool(name) {
   return ALLOW_WRITES
 }
 
-const SYSTEM_PROMPT = `You are JARVIS. You are speaking out loud to one person.
+const SYSTEM_PROMPT = `You are K.I.N.G. — Kinetic Intelligence & Neural Gateway, call sign "King".
+You are the Chief of Staff for the Kingenious ecosystem, speaking out loud to one
+person. They address you as "Hey King", "King" or "Yo King".
+
+ORDER OF EVERY ANSWER: hard metrics and system anomalies first, then action
+confirmations, then anything else. No pleasantries, no conversational preamble,
+no "how can I help". If something is degraded, that is the first thing out of
+your mouth. If nothing is degraded, lead with the number they asked for.
 
 LENGTH. Two sentences is the ceiling in conversation; the median is under twelve
 words. Every word is read aloud and the user waits in silence while it plays, so
@@ -425,6 +546,59 @@ Your eyes:
   will see it. Curiosity is not a reason.
 - Describe a watch as a sequence — what changed between the frames — not as a
   list of pictures. They know what their own hands look like.
+
+Code and version control — GitHub, via the \`mcp__github__*\` tools:
+- Read: pull requests, issue queues, CI/CD run status, commit diffs, and
+  cross-repo code search. \`search_repositories\` queries GitHub's public catalog
+  for templates, libraries and boilerplates — use it whenever they ask what
+  exists, what to start from, or what is worth forking.
+- Write: \`create_fork\` forks a target repo into their account (kingenious0).
+  Fork first, then clone the FORKED repo — never clone an upstream they do not
+  own and then try to push to it.
+- Workflow dispatch, branch creation, PR merge, hotfix push, and opening,
+  labelling and closing issues are all fair game. Trigger a workflow when they
+  ask for a build, a test run or a production deploy.
+- Report repo state as numbers: N open PRs, N failing checks, last commit age.
+
+Production database — Supabase/Postgres, via the \`mcp__postgres__*\` tools:
+- Read: live row counts, auth user registries, transaction logs, real-time error
+  records and storage bucket usage. These are the metrics an infrastructure
+  check leads with.
+- Both connection styles are supported: a session pooler URI and a transaction
+  pooler URI (\`DATABASE_URL\`). Use whichever is configured; if a query fails on
+  connection, say so once and report what you could reach.
+- Reads only, and never promise more. That server opens every session with
+  \`BEGIN TRANSACTION READ ONLY\`, so a write fails at the database no matter
+  what is enabled here — do not offer to change data, run a migration, insert a
+  row or invalidate a session. If they ask for one, say it is not available from
+  this station and that it needs doing in the Supabase dashboard or a migration
+  run, then carry on with the numbers.
+- Parameterised SQL for every query — \`$1\`, \`$2\`, never a value interpolated
+  into the statement text.
+
+Execution workspace — \`king_clone\` and \`king_deploy\` (bridge tools):
+- \`king_clone\` runs a git clone into the K.I.N.G. workspace folder. Use it for
+  "clone <repo>", "pull that down locally", or when they want a repo on disk.
+  Clone the fork, into the workspace, never into the project directory.
+- \`king_deploy\` triggers an edge redeploy (Vercel), a GitHub Actions workflow
+  dispatch, or a PM2/Nginx restart via aaPanel. Call it only when they ask for a
+  deploy, a redeploy, a restart, or to push a fix live.
+- After any effectful action, confirm in one sentence with the actual result
+  (deployment id, run URL, exit status). A confirmation without a result is a
+  claim, not a confirmation.
+
+Infrastructure check — when they say "infrastructure check", "status check",
+"how are things", or ask for a system report:
+- Lead with anomalies. If everything is nominal, say so in one clause, then give
+  the two or three numbers that prove it: repo activity, database row/auth
+  counts, host load.
+- Compose the detail onto a blade rather than reading it aloud. Numbers first in
+  speech, table on screen.
+
+When writes are DISABLED (\`JARVIS_ALLOW_WRITES\` unset):
+- Read tools work normally. Effectful tools are refused by the bridge, not by
+  you — when one comes back refused, one plain sentence: writes are locked.
+  Offer \`npm run bridge:writes\`. Never claim you completed a write you did not.
 
 Using tools:
 - You have real tools on this machine. Use them rather than guessing.
@@ -1044,8 +1218,35 @@ wss.on('connection', (socket) => {
 
   // Answer the HUD straight away rather than making it wait for the agent's
   // first turn. Refined later by the real init message.
+  //
+  // Config-file servers alone are not the whole picture: everything defined in
+  // this file is also registered on the session, and those are the ones the
+  // rebrand and M2 are actually about. Until the init frame arrives the HUD
+  // would otherwise say "none linked" on a machine with no ~/.claude.json
+  // servers at all — which looks like a broken integration rather than a
+  // missing config file.
   socket.send(
-    JSON.stringify({ type: 'ready', servers: Object.keys(MCP_SERVERS) }),
+    JSON.stringify({
+      type: 'ready',
+      servers: [
+        ...Object.keys(MCP_SERVERS),
+        ...Object.keys(postgresServers()),
+        'jarvis',
+        'jarvis_ui',
+        'jarvis_chrome',
+        'jarvis_eyes',
+        'github',
+        // Only when there is something to call. See sessionServers below —
+        // opsServer is not constructed at all without write access, so listing
+        // it here would put "Ops" on the rail for a station that cannot clone
+        // or deploy anything.
+        ...Object.keys(OPS_SERVERS),
+      ],
+      // Whether effectful tools exist at all. Worth telling the face: a HUD
+      // that shows a linked GitHub and a clone tool while reads are all that
+      // is permitted is quietly lying about what the station can do.
+      writes: ALLOW_WRITES,
+    }),
   )
 
   /** Resolves the pending user message into the SDK's input generator. */
@@ -1214,6 +1415,17 @@ wss.on('connection', (socket) => {
         jarvis_chrome: chromeServer({ allowWrites: ALLOW_WRITES }),
         // The camera, which unlike everything else here has to ask and wait.
         jarvis_eyes: visionServer(ask),
+        // GitHub over the machine's own `gh` login. Reads always, fork /
+        // dispatch / merge only when writes are on. Named `github` so it sits
+        // under the same key a PAT-configured server would.
+        github: githubServer({ allowWrites: ALLOW_WRITES }),
+        // Cloning and deploying. Empty without write access: the tools do not
+        // exist, so neither does the server, and the ready frame has no
+        // "Ops" line to put on the rail for a station that cannot act.
+        ...OPS_SERVERS,
+        // Supabase/Postgres. Empty unless a connection URI is configured, so a
+        // machine with no database never advertises a tool that will fail.
+        ...postgresServers(),
       },
       // A plain system prompt, not the claude_code preset. The preset is
       // tuned for a coding agent — verbose, file-oriented, and a large chunk
@@ -1261,8 +1473,8 @@ wss.on('connection', (socket) => {
       // through a `Bash: echo hello` without asking, and only reaches us for
       // something with a consequence, like a `touch`. So a deny here is
       // reliable; an absence of a call here is not proof nothing ran.
-      canUseTool: async (toolName) => {
-        const ok = decideTool(toolName)
+      canUseTool: async (toolName, input) => {
+        const ok = decideTool(toolName, input)
         console.log(`[jarvis] tool ${toolName} -> ${ok ? 'allow' : 'deny'}`)
         return ok
           ? { behavior: 'allow' }
@@ -1271,9 +1483,10 @@ wss.on('connection', (socket) => {
               // Every word of this can end up spoken, so it carries no command
               // to read out — the persona is forbidden from saying one aloud.
               message:
-                'Blocked: JARVIS is running in read-only mode and cannot take' +
+                'Blocked: K.I.N.G. is running in read-only mode and cannot take' +
                 ' actions that change anything. Tell the user this action is' +
-                ' unavailable until they enable write access on the machine.',
+                ' unavailable until they enable write access on the machine by' +
+                ' running npm run bridge:writes.',
             }
       },
     },
@@ -1375,7 +1588,7 @@ wss.on('connection', (socket) => {
               const usable = (msg.mcp_servers ?? [])
                 .filter((s) => s.status !== 'needs-auth' && s.status !== 'failed')
                 .map((s) => s.name)
-              send({ type: 'ready', servers: usable })
+              send({ type: 'ready', servers: usable, writes: ALLOW_WRITES })
               console.log(`[jarvis] ${usable.length} MCP servers available`)
             }
             break

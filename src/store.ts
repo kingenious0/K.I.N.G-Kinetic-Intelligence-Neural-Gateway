@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { KING_PHASE } from './lib/theme'
 
 export type Phase =
   | 'offline'   // waiting for the click that unlocks audio
@@ -138,7 +139,7 @@ export type UiState = {
     transcript: boolean   // the conversation log
     toolBadge: boolean    // the active-tool readout under the reactor
     suggestions: boolean  // the "try saying…" hint
-    brand: boolean        // the J.A.R.V.I.S. wordmark + status
+    brand: boolean        // the K.I.N.G wordmark + status
   }
   effect: UiEffect | null
 }
@@ -220,6 +221,9 @@ type State = {
   activeTool: string | null
   error: string | null
   connected: string[]
+  /** Whether the bridge allows effectful tools (shell, files, clone, deploy).
+   *  Shown on the rail so a read-only station never looks armed. */
+  writes: boolean
   /** Name of the speech-synthesis voice in use, shown in the HUD. */
   voice: string
   /** Whether the camera is on and hands are being tracked. Store-backed rather
@@ -258,6 +262,7 @@ type State = {
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
   setConnected: (c: string[]) => void
+  setWrites: (w: boolean) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
 
@@ -278,6 +283,7 @@ export const useStore = create<State>((set) => ({
   activeTool: null,
   error: null,
   connected: [],
+  writes: false,
   voice: '',
   gestures: false,
   looking: null,
@@ -352,6 +358,7 @@ export const useStore = create<State>((set) => ({
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
   setConnected: (connected) => set({ connected }),
+  setWrites: (writes) => set({ writes }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
   appendToLastTurn: (text) =>
     set((s) => {
@@ -415,17 +422,9 @@ export const useStore = create<State>((set) => ({
     }),
 }))
 
-/** Colour identity per phase — shared by the 3D scene and the 2D HUD. */
-export const phaseColor: Record<Phase, string> = {
-  offline: '#0d4a4a',
-  boot: '#17b3b3',
-  dormant: '#12908f',
-  waking: '#5cf2ef',
-  listening: '#19d8d2',
-  thinking: '#f0a93c',
-  tooling: '#a97bff',
-  speaking: '#3ef2a8',
-}
+/** Colour identity per phase — shared by the 3D scene and the 2D HUD.
+ *  K.I.N.G.: gold at rest, violet under load. See src/lib/theme.ts. */
+export const phaseColor: Record<Phase, string> = KING_PHASE
 
 /**
  * What colour is the interface right now.

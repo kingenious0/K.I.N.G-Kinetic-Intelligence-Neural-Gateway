@@ -1,12 +1,17 @@
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;600&family=JetBrains+Mono:wght@300;400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400&display=swap');
 
 :root {
-  /* The interface cyan. `--accent` is re-declared per phase and per panel;
-     this one stays put and is what anything neutral pins itself to. */
-  --interface: #00e5ff;
+  /* K.I.N.G. — Imperial Amber Gold on Deep Obsidian Black.
+     `--accent` is re-declared per phase and per panel; this one stays put
+     and is what anything neutral pins itself to. */
+  --interface: #ffb703;
   --accent: var(--interface);
-  --bg: #01060c;
-  font-family: 'Chakra Petch', system-ui, sans-serif;
+  --bg: #050508;
+  --corona: #ffe28a;
+  --violet: #7c3aed;
+  --hud-border: rgba(255, 183, 3, 0.15);
+  --hud-rail: rgba(255, 183, 3, 0.08);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
   color-scheme: dark;
 }
 
@@ -230,7 +235,7 @@ body::after {
   max-width: min(52vw, 620px);
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #f2fbff;
+  color: #ffffff;
   text-shadow: 0 0 24px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
@@ -286,7 +291,7 @@ body::after {
 
 .log-user .log-text { opacity: 0.52; }
 .log-jarvis .log-text {
-  color: #eaf9ff;
+  color: #ffffff;
   text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
@@ -388,7 +393,7 @@ kbd {
    while every explicitly accented panel holds still. A panel is a record of a
    moment; it should stop changing colour once it has landed. */
 .panel-default { --accent: var(--interface); }
-.panel-amber  { --accent: #ffb547; }
+.panel-amber  { --accent: #ffb703; }
 .panel-violet { --accent: #c77dff; }
 .panel-green  { --accent: #5affc8; }
 .panel-red    { --accent: #ff6b6b; }
@@ -722,7 +727,7 @@ kbd {
   font-size: 12px;
   line-height: 1.55;
   opacity: 0.8;
-  color: #dff4ff;
+  color: #ffffff;
 }
 
 .hud-grid {
@@ -803,7 +808,7 @@ kbd {
   z-index: 7;
   display: grid;
   place-items: center;
-  background: radial-gradient(ellipse at center, #04121c 0%, #01060c 70%);
+  background: radial-gradient(ellipse at center, #1a1002 0%, #030305 70%);
   border: 0;
   cursor: pointer;
   font-family: inherit;
@@ -885,7 +890,7 @@ kbd {
   font-size: clamp(18px, 3.4vw, 40px);
   font-weight: 300;
   letter-spacing: 0.14em;
-  color: #eafcff;
+  color: #ffffff;
   text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 .boot-dots { opacity: 0.6; margin: 0 0.2em; }
@@ -948,7 +953,7 @@ kbd {
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 50%, transparent));
 }
 .boot-name {
-  fill: #eafcff;
+  fill: #ffffff;
   font-family: 'JetBrains Mono', monospace;
   font-size: 20px;
   text-anchor: middle;
@@ -987,13 +992,13 @@ kbd {
 .boot-r-ring-in { stroke-width: 1.5; opacity: calc(0.2 + var(--glow) * 0.5); }
 .boot-r-tri {
   fill: color-mix(in srgb, var(--accent) calc(var(--glow) * 45%), transparent);
-  stroke: #eafcff;
+  stroke: #ffffff;
   stroke-width: 3;
   stroke-linejoin: round;
   filter: drop-shadow(0 0 calc(var(--glow) * 26px) var(--accent));
 }
 .boot-r-tri-in {
-  fill: color-mix(in srgb, #eafcff calc(var(--glow) * 60%), transparent);
+  fill: color-mix(in srgb, #ffffff calc(var(--glow) * 60%), transparent);
   stroke: none;
 }
 .boot-r-v {
@@ -1496,7 +1501,7 @@ kbd {
   overflow-y: auto;
   padding: 0.75rem 0.9rem;
   background: rgba(2, 10, 12, 0.94);
-  border: 1px solid var(--accent, #19d8d2);
+  border: 1px solid var(--accent, #ffb703);
   border-radius: 2px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.72rem;
@@ -1508,7 +1513,7 @@ kbd {
 
 .diag-head {
   letter-spacing: 0.18em;
-  color: var(--accent, #19d8d2);
+  color: var(--accent, #ffb703);
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   padding-bottom: 0.4rem;
   margin-bottom: 0.5rem;
@@ -1525,7 +1530,7 @@ kbd {
 .diag-sec {
   margin: 0.7rem 0 0.3rem;
   letter-spacing: 0.16em;
-  color: #6d8886;
+  color: #a1a1aa;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding-top: 0.45rem;
 }
@@ -1536,7 +1541,7 @@ kbd {
   gap: 0.5rem;
 }
 
-.diag-k { color: #6d8886; }
+.diag-k { color: #a1a1aa; }
 .diag-v { color: #cfe6e3; overflow-wrap: anywhere; }
 .diag-ok { color: #3ef2a8; }
 .diag-bad { color: #ff6b6b; }

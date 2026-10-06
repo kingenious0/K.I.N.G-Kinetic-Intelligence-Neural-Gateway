@@ -12,15 +12,15 @@ import { useStore } from '../store'
  * Each line is phrased the way you'd actually say it, not as a feature name.
  */
 const EXAMPLES = [
-  'what happened in AI this week',
-  'generate an image of the Mark Seven suit',
-  'take a screenshot of my phone',
+  'give me an infrastructure check',
+  'what changed in my open pull requests',
+  'how many users are in the database',
+  'trigger a production deployment for the portal',
+  'search GitHub for a dashboard boilerplate',
   "what's on my calendar tomorrow",
-  'search for the best coffee near me',
   'read me the top story on Hacker News',
   'open my GitHub notifications',
   "summarise what's in my inbox",
-  'find me a loading animation',
   "what's the weather looking like",
 ]
 
@@ -52,7 +52,7 @@ export function Suggestions() {
           exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.35 }}
         >
-          “hey jarvis, {EXAMPLES[i]}”
+          “hey king, {EXAMPLES[i]}”
         </motion.span>
       </AnimatePresence>
     </div>

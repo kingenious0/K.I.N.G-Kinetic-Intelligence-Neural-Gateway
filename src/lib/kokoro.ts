@@ -11,7 +11,7 @@
  * carries four British male voices, which is what this project actually wants.
  *
  * The cost is a one-time ~86MB model download, cached by the browser
- * afterwards. It's fetched during the boot sequence so the first "Hey Jarvis"
+ * afterwards. It's fetched during the boot sequence so the first "Hey King"
  * isn't waiting on it, and anything that goes wrong falls back to Daniel.
  */
 

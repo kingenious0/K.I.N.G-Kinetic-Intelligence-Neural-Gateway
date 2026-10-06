@@ -15,6 +15,9 @@
  *   node bridge/server.mjs
  */
 
+// Must stay first: this loads bridge/.env, and the modules below read
+// process.env at module scope, before any of this file's own statements run.
+import './envfile.mjs'
 import { WebSocketServer } from 'ws'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { displayServer } from './panels.mjs'

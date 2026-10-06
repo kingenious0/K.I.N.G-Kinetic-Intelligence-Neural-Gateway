@@ -218,7 +218,11 @@ then the triangular arc reactor lighting up — with a start-up sound under it
 ## Configuration
 
 Everything is optional in bridge mode. Frontend settings live in `.env.local`
-(copy `.env.example`); bridge settings are environment variables.
+(copy `.env.example`); bridge settings live in `bridge/.env` (copy
+`bridge/.env.example`) or in the shell that starts the bridge; deployment
+settings live in the host's project environment. One rule covers all three —
+**`VITE_` is the only prefix that can reach the browser**, and anything else
+is read by a process that never ships to anyone.
 
 ### Bridge
 
@@ -236,14 +240,97 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 
 ### Frontend (`.env.local`)
 
-| Variable                 | Effect                         |
-| ------------------------ | ------------------------------ |
-| `VITE_BACKEND`           | `bridge` (default) or `direct` |
-| `VITE_BRIDGE_URL`        | Where to reach the bridge      |
-| `VITE_TTS_ENGINE`        | `system` or `kokoro`           |
-| `VITE_KOKORO_VOICE`      | Voice for the Kokoro engine    |
-| `VITE_USE_ELEVENLABS`    | Force the ElevenLabs voice on  |
-| `VITE_ANTHROPIC_API_KEY` | Direct mode only               |
+| Variable                 | Effect                                          |
+| ------------------------ | ----------------------------------------------- |
+| `VITE_BACKEND`           | `bridge` (default), `groq` or `direct`          |
+| `VITE_BRIDGE_URL`        | Where to reach the bridge                       |
+| `VITE_TTS_ENGINE`        | `system` or `kokoro`                            |
+| `VITE_KOKORO_VOICE`      | Voice for the Kokoro engine                     |
+| `VITE_USE_ELEVENLABS`    | Force the ElevenLabs voice on                   |
+| `VITE_ANTHROPIC_API_KEY` | Direct mode only                                |
+
+### Standalone on Vercel (`VITE_BACKEND=groq`)
+
+Standalone mode needs one thing bridge mode does not: somewhere to hold the
+Groq key. That is `api/chat.ts`, a small function that the page posts to
+instead of posting to Groq. `GROQ_API_KEY` is read there and nowhere else, so
+it never has a `VITE_` prefix and never enters the bundle — you can grep
+`dist/` after a build and find no key at all. `npm run dev` serves the same
+route from a middleware in `vite.config.ts`, so development and production hit
+one implementation.
+
+| Variable                    | Where    | Effect                                        |
+| --------------------------- | -------- | --------------------------------------------- |
+| `VITE_BACKEND`              | Vercel   | `groq` — selects standalone mode              |
+| `GROQ_API_KEY`              | Vercel   | **Server side only.** The proxy's credential  |
+| `GROQ_MODEL`                | Vercel   | Primary model. Default `qwen/qwen3.8-27b`     |
+| `GROQ_MODEL_FALLBACK`       | Vercel   | Used when the primary id is retired           |
+| `VITE_GROQ_MODEL`           | Vercel   | The same model, for the HUD rail label        |
+
+Deploy it with no build command, framework preset or output directory to
+configure: Vercel detects Vite, runs `npm run build`, serves `dist/`, and turns
+`api/` into functions.
+
+Two things the proxy does on its own, so you do not have to configure them:
+
+- **Fallback.** Groq retires model ids without notice (`qwen-2.5-32b` was the
+  original default and is now decommissioned). If the primary is refused, the
+  proxy retries once with the fallback and answers `x-king-model` /
+  `x-king-fallback: 1`, which the page shows on the tool badge. One retry, not
+  a loop — a rate limit or a malformed request would fail the same way twice.
+- **Origin gate.** The endpoint holds a paid credential and cannot carry a
+  secret of its own, so it refuses any request whose `Origin` header names a
+  different host than the request. A browser on your own site passes; a page
+  on somebody else's does not.
+
+Locally, `GET /api/chat` answers `{ ok: true, hasKey: boolean }` — that is the
+probe the page runs at boot to tell you the key is missing, rather than
+finding out on the first message.
+
+### MCP servers (`~/.claude.json`)
+
+The bridge starts from the servers Claude Code already has configured: the
+global `mcpServers` block and the one scoped to your home directory are read
+from `~/.claude.json` and handed to the agent, so `npm run bridge` picks up
+whatever you already use. Three entries deserve specific notes:
+
+- **`elevenlabs`** — `mcpServers.elevenlabs.env.ELEVENLABS_API_KEY` is read
+  directly, alongside the environment variable of the same name.
+- **`github`** — the token is used: `mcpServers.github.env.GITHUB_PERSONAL_ACCESS_TOKEN`
+  is what `king_deploy`'s `github` target authenticates with. The server entry
+  itself is *not* used, because the bridge registers its own `github` server
+  over the top of it — one built from the machine's own `gh` login, which is
+  the read-only path. A PAT is only needed for the deploy target.
+- **`postgres`** — used only when no connection string is in the environment.
+  `SUPABASE_SESSION_DB_URL`, `SUPABASE_TRANSACTION_DB_URL` and `DATABASE_URL`
+  are checked first and, if one is set, that server replaces this entry.
+
+```jsonc
+// ~/.claude.json — the entries the bridge understands
+{
+  "mcpServers": {
+    "elevenlabs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-elevenlabs"],
+      "env": { "ELEVENLABS_API_KEY": "…" }
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_…" }
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgres://…"]
+    }
+  }
+}
+```
+
+Anything else in that block is passed through untouched, so a local stdio
+server works here exactly as it does in Claude Code. The bridge only reads
+those two scopes — project blocks for other directories are ignored, because
+the bridge's working directory is your home directory.
 
 ### Adding an ElevenLabs key
 
@@ -303,6 +390,22 @@ All of this lives in `bridge/server.mjs`:
   resolve the real path, and refuse private and loopback addresses (SSRF guard).
 - The tool gate (`decideTool`) is default-deny for effectful MCP tools.
 - A strict CSP in `index.html`; model-authored panel HTML is sanitised.
+
+And the deployment side, in `server/groqProxy.ts` — shared by `api/chat.ts`
+and the dev middleware, so there is one implementation to audit:
+
+- `GROQ_API_KEY` is read by the function and never by `import.meta.env`. Vite's
+  `envPrefix` is left at its default of `VITE_`, so nothing named `GROQ_*` can
+  reach the bundle. Check a build with `grep -r gsk_ dist/` — it should find
+  nothing.
+- The model is chosen on the server. A request carries `messages`, `tools` and
+  sampling parameters and not a model id, so the endpoint cannot be pointed at
+  something you did not configure.
+- The body is rebuilt field by field rather than forwarded, capped in size and
+  in tool count, and a request whose `Origin` names a different host than the
+  request is refused.
+- `bridge/.env`, `.env` and `.env.local` are gitignored; only the
+  `.env.example` templates are tracked.
 
 ---
 

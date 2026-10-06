@@ -1,4 +1,4 @@
-import { env, GROQ_MODEL, GROQ_MODEL_FALLBACK, BRIDGE_OFFLINE, SYSTEM_PROMPT } from '../config'
+import { GROQ_MODEL, BRIDGE_OFFLINE, SYSTEM_PROMPT } from '../config'
 import type { AskHandlers } from './anthropic'
 import type { Panel } from '../store'
 
@@ -258,7 +258,13 @@ function executeUiTool(name: string, rawArgs: string): string {
 }
 
 /**
- * Ask Groq with streaming response and UI tool calling.
+ * Ask the proxy with a streaming response and UI tool calling.
+ *
+ * The URL is `/api/chat`, not Groq: the key lives in `api/chat.ts`, so this
+ * module carries a model-free payload and no credentials at all. That also
+ * means there is nothing here to fall back *to* — a retired model id is
+ * retried by the proxy, which is the only place with both model names and the
+ * key to use them.
  */
 export async function ask(
   history: Array<{ role: string; content?: string }>,
@@ -268,31 +274,19 @@ export async function ask(
   const abortController = new AbortController()
   activeAbort = abortController
 
-  const apiKey = env.groqKey
-  if (!apiKey) {
-    throw new Error(
-      'No Groq API key configured. Set GROQ_API_KEY (Vercel) or VITE_GROQ_API_KEY (.env.local).',
-    )
-  }
-
   const usedTools: string[] = []
   let fullText = ''
-  let fallbackTried = false
 
   const messages: any[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...history.filter((m) => m.content && (m.role === 'user' || m.role === 'assistant')),
   ]
 
-  async function callApi(currentMessages: any[], model: string): Promise<string> {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  async function callApi(currentMessages: any[]): Promise<string> {
+    const response = await fetch('/api/chat', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model,
         messages: currentMessages,
         tools: [...UI_TOOLS, ...BRIDGE_TOOLS],
         tool_choice: 'auto',
@@ -312,9 +306,26 @@ export async function ask(
       } catch {
         if (errText) errMsg += `: ${errText}`
       }
-      const err = new Error(errMsg) as Error & { status?: number }
-      err.status = response.status
-      throw err
+      throw new Error(errMsg)
+    }
+
+    // A host that serves the static files but has no `api/` function answers
+    // this route with the app's own HTML. Reporting that as a blank reply would
+    // look like the model had nothing to say; saying what happened turns a
+    // silent stall into a sentence.
+    const contentType = response.headers.get('content-type') ?? ''
+    if (/text\/html/i.test(contentType)) {
+      throw new Error(
+        '/api/chat is not available on this host — the page is being served without the Groq proxy.',
+      )
+    }
+
+    // The proxy names the model that actually answered, and flags it when that
+    // was not the one asked for. Only the swap is worth a badge: "qwen3.8-27b"
+    // on every turn is noise, "openai/gpt-oss-20b" once is information.
+    const answeredBy = response.headers.get('x-king-model')
+    if (response.headers.get('x-king-fallback') === '1' && answeredBy) {
+      handlers.onTool(`model · ${answeredBy}`)
     }
 
     const reader = response.body?.getReader()
@@ -400,48 +411,19 @@ export async function ask(
           { role: 'assistant', content: null, tool_calls: toolCallMessages },
           ...toolResults,
         ]
-        return await run(nextMessages)
+        return await callApi(nextMessages)
       }
     }
 
     return fullText
   }
 
-  /**
-   * Primary model first, fallback once if Groq says that model does not exist.
-   *
-   * Groq retires and renames model ids without notice, so a hardcoded id is a
-   * time bomb rather than a configuration. Swapping once — and showing the swap
-   * on the tool badge — turns "the site is down" into a footnote. It is not a
-   * retry loop: a second failure is the real failure and it propagates.
-   */
-  async function run(currentMessages: any[]): Promise<string> {
-    try {
-      return await callApi(currentMessages, GROQ_MODEL)
-    } catch (err) {
-      if (fallbackTried || !isModelUnavailable(err)) throw err
-      fallbackTried = true
-      handlers.onTool(`model · ${GROQ_MODEL_FALLBACK}`)
-      return await callApi(currentMessages, GROQ_MODEL_FALLBACK)
-    }
-  }
-
   try {
-    const text = await run(messages)
+    const text = await callApi(messages)
     return { text: text.trim(), tools: usedTools }
   } finally {
     if (activeAbort === abortController) {
       activeAbort = null
     }
   }
-}
-
-/** 404 is the plain case; Groq also answers 400/410 with the reason in prose. */
-function isModelUnavailable(err: unknown): boolean {
-  const status = (err as { status?: number })?.status
-  if (status === 404 || status === 410) return true
-  const message = err instanceof Error ? err.message : ''
-  return /model_not_found|model.{0,20}not (found|supported|available)|does not exist|unknown model|decommissioned|invalid model id/i.test(
-    message,
-  )
 }

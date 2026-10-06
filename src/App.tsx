@@ -479,8 +479,20 @@ export default function App() {
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
 
-    if (STANDALONE && !env.groqKey) {
-      s.setError('No Groq API key — set GROQ_API_KEY (Vercel) or VITE_GROQ_API_KEY (.env.local)')
+    if (STANDALONE) {
+      // The key is behind /api/chat, so the only way to know it is configured
+      // is to ask the proxy rather than to read it. Fire-and-forget on purpose:
+      // a network failure — no function deployed, an offline laptop, a page
+      // opened from disk — says nothing about the key and must not hold up the
+      // boot sequence waiting for it.
+      void fetch('/api/chat')
+        .then((r) => r.json())
+        .then((d: { hasKey?: boolean } | null) => {
+          if (d && d.hasKey === false) {
+            s.setError('No Groq API key — set GROQ_API_KEY in the deployment environment.')
+          }
+        })
+        .catch(() => {})
     } else if (BACKEND === 'direct' && !env.anthropicKey) {
       s.setError(
         'No Anthropic API key — copy .env.example to .env.local and set VITE_ANTHROPIC_API_KEY.',

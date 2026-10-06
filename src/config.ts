@@ -47,9 +47,14 @@ function flag(name: string, raw: unknown, fallback: boolean): boolean {
 }
 
 /**
- * The secrets and per-machine knobs. Declared before BACKEND because BACKEND's
- * default picks a brain by asking whether a Groq key exists — a `const` read
- * before its initializer runs is a ReferenceError, not an `undefined`.
+ * The keys the page itself holds. Deliberately short.
+ *
+ * There is no Groq key here, and that is the point of `api/chat.ts`: the
+ * engine's credential lives behind the proxy, so `GROQ_API_KEY` is never
+ * prefixed `VITE_`, never read through `import.meta.env`, and therefore never
+ * in the bundle. GITHUB_PERSONAL_ACCESS_TOKEN and DATABASE_URL stay outside
+ * the browser for the same reason — they have no `VITE_` prefix to fall
+ * through.
  */
 export const env = {
   anthropicKey: str(import.meta.env.VITE_ANTHROPIC_API_KEY) ?? '',
@@ -57,39 +62,21 @@ export const env = {
   elevenVoiceId:
     str(import.meta.env.VITE_ELEVENLABS_VOICE_ID) ?? 'JBFqnCBsd6RMkjVDRZzb',
   porcupineKey: str(import.meta.env.VITE_PICOVOICE_ACCESS_KEY) ?? '',
-  /**
-   * The Groq key. A Vercel deployment sets the bare GROQ_API_KEY — the name
-   * Groq's own docs use, and the one a non-Vite consumer would read — while
-   * local .env files carry VITE_GROQ_API_KEY alongside it. Both are accepted
-   * so the same project works in either place without renaming anything.
-   *
-   * `envPrefix` in vite.config.ts is what makes the bare name visible here;
-   * without it Vite only exposes VITE_* and GROQ_API_KEY reads as undefined.
-   *
-   * This key is the one secret that does ship to the browser, and only in
-   * standalone mode, where there is no server to hold it. GITHUB_* and
-   * DATABASE_URL deliberately have no GROQ_ or VITE_ prefix, so they are
-   * outside envPrefix and can never reach the bundle.
-   */
-  groqKey: str(import.meta.env.VITE_GROQ_API_KEY) ?? str(import.meta.env.GROQ_API_KEY) ?? '',
 }
 
-export const GROQ_MODEL =
-  str(import.meta.env.VITE_GROQ_MODEL) ?? str(import.meta.env.GROQ_MODEL) ?? 'qwen/qwen3.8-27b'
-
 /**
- * Used only when the primary model is rejected as unavailable. Groq retires
- * model ids without warning — `qwen-2.5-32b` was the original choice here and
- * is now "decommissioned and no longer supported" — and a dead id is the most
- * likely cause of a deploy that worked yesterday failing today.
+ * The model the page *expects*, used for the rail label only.
  *
- * `openai/gpt-oss-20b` is the nearest live equivalent: a dense ~20B chat model
- * sitting in the same speed class as the 27B primary, rather than a much larger
- * one that would answer noticeably slower. Checked against
- * GET /openai/v1/models; there is no second Qwen on the platform.
+ * The request itself carries no model — `/api/chat` picks it from the
+ * environment, and answers with `x-king-model` naming whichever one actually
+ * responded. Two reasons for keeping a copy here: the HUD has to print
+ * something before the first reply, and a Vercel project that overrides the
+ * model with the bare `GROQ_MODEL` name would otherwise label the rail with a
+ * name the deployment is no longer using. The reply header settles the
+ * difference on the first turn.
  */
-export const GROQ_MODEL_FALLBACK =
-  str(import.meta.env.VITE_GROQ_MODEL_FALLBACK) ?? 'openai/gpt-oss-20b'
+export const GROQ_MODEL =
+  str(import.meta.env.VITE_GROQ_MODEL) ?? 'qwen/qwen3.8-27b'
 
 /** `claude-opus-5` is the strongest model; `claude-sonnet-5` trades a little
  *  quality for lower latency if you find responses feel slow on camera. */
@@ -103,21 +90,24 @@ export const MODEL = 'claude-opus-5'
 export const FAST_MODE = true
 
 /**
- * Which brain to use.
- *
- *   'groq'   — the default whenever a Groq key is present. The browser talks
- *              straight to Groq Cloud and everything runs on the page: Three.js
- *              core, speech, inference. Deploy it to Vercel as a static site
- *              and there is no backend to keep alive. The trade is that the
- *              bridge-only tools (king_clone, king_deploy, the database) have
- *              nowhere to run — see BRIDGE_OFFLINE below, which says so out
- *              loud instead of throwing.
+ * Which brain to use. `VITE_BACKEND` decides; when it is unset we default to
+ * the bridge, which needs no key of its own — that is what the README has
+ * always documented as the default, and it is the mode that works on a fresh
+ * clone with an empty `.env.local`.
  *
  *   'bridge' — run `npm run bridge` alongside the app. Authenticates off your
  *              existing Claude Code login (no API key), and every MCP server in
  *              your Claude Code config is available to JARVIS, including local
  *              ones like higgsfield, elevenlabs, android and playwright. This is
  *              also the only path where clone/deploy and the database work.
+ *
+ *   'groq'   — standalone. The page posts to `/api/chat`, the proxy in
+ *              `api/chat.ts` holds the Groq key, and everything else — Three.js
+ *              core, speech, inference — runs on the page. Set VITE_BACKEND=groq
+ *              on Vercel; there is no other process to keep alive. The trade is
+ *              that the bridge-only tools (king_clone, king_deploy, the
+ *              database) have nowhere to run — see BRIDGE_OFFLINE below, which
+ *              says so out loud instead of throwing.
  *
  *   'direct' — the browser calls the Claude API itself. Nothing to run and it
  *              deploys as a static site, but it needs VITE_ANTHROPIC_API_KEY in
@@ -127,7 +117,7 @@ export const BACKEND: 'bridge' | 'direct' | 'groq' = choice(
   'VITE_BACKEND',
   import.meta.env.VITE_BACKEND,
   ['bridge', 'direct', 'groq'] as const,
-  env.groqKey ? 'groq' : 'bridge',
+  'bridge',
 )
 
 /**

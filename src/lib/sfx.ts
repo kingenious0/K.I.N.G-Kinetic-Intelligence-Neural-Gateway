@@ -6,14 +6,18 @@
  * licence to worry about, a few hundred bytes instead of a few megabytes.
  *
  * To use real recordings instead, drop matching files into `public/audio/`
- * (boot.mp3, wake.mp3, listen.mp3, tool.mp3, done.mp3, error.mp3) and they take
- * over automatically. Pixabay's sci-fi UI and HUD packs are the usual source —
- * CC0, no attribution, safe on a monetised channel. `ambient.mp3` is not one of
+ * (boot.mp3, wake.mp3, listen.mp3, tool.mp3, done.mp3, error.mp3) and list the
+ * cue names in `public/audio/manifest.json` so they take over on the next
+ * build. Pixabay's sci-fi UI and HUD packs are the usual source — CC0, no
+ * attribution, safe on a monetised channel. `ambient.mp3` is not one of
  * these: the looping bed is music.ts's, and the oscillator pair at the bottom of
  * this file is only the fallback for when that file isn't there.
  */
 
 type Cue = 'boot' | 'wake' | 'listen' | 'tool' | 'done' | 'error'
+
+/** Every cue this module can make. Used to validate what the manifest claims. */
+const ALL_CUES: Cue[] = ['boot', 'wake', 'listen', 'tool', 'done', 'error']
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
@@ -77,9 +81,38 @@ export async function unlockAudio(): Promise<void> {
   void loadOverrides()
 }
 
-/** Pick up any real audio files the user has dropped into public/audio/. */
+/**
+ * Pick up any real audio files the user has dropped into public/audio/.
+ *
+ * The set of them comes from `public/audio/manifest.json` rather than from
+ * asking the server about each cue in turn, and the reason is that those are
+ * not the same question. A blind `fetch('/audio/boot.mp3')` on a clean install
+ * answers 404, and the browser logs every 404 to its console regardless of how
+ * the response is handled — wrapping it in try/catch swallows the throw, not
+ * the network error, so six probes meant six red lines on a page that was
+ * working perfectly. There is no fetch mode or status check that hides a
+ * missing file, because the missing file is itself the thing being reported.
+ *
+ * A manifest is an existence check that costs one request which always
+ * succeeds. It ships empty, so a fresh clone makes no per-cue requests at all
+ * and the synthesised cues are simply the sound of the app; adding a file
+ * means naming it, which is one line next to the file rather than a guess the
+ * code has to make about what is on disk.
+ */
 async function loadOverrides() {
-  const cues: Cue[] = ['boot', 'wake', 'listen', 'tool', 'done', 'error']
+  let listed: unknown
+  try {
+    const res = await fetch('/audio/manifest.json')
+    if (!res.ok) return
+    listed = (await res.json()).cues
+  } catch {
+    // No manifest, or it could not be read: the synthesised cues are the
+    // shipped sound, which is the state the module is designed to run in.
+    return
+  }
+  if (!Array.isArray(listed)) return
+
+  const cues = ALL_CUES.filter((cue) => listed.includes(cue))
   await Promise.all(
     cues.map(async (cue) => {
       if (samples.has(cue)) return

@@ -44,6 +44,16 @@
       model, ws: for both the bridge and Vite's HMR socket, https: for the
       model download and the speech API, and 'unsafe-inline' scripts for the
       React Fast Refresh preamble Vite injects in dev.
+
+      `https://cdn.jsdelivr.net` sits in `script-src` for one reason: the ONNX
+      runtime that backs the Kokoro voice is loaded as a `.mjs` from there at
+      call time, so without this host the import is refused by the policy and
+      the voice stack falls through to `speechSynthesis`. It is in `worker-src`
+      for the same import seen as a worker. Both are additions to a script-src
+      that already carries 'unsafe-eval', so the policy is no weaker for them —
+      what they buy is a neural voice that actually loads. `connect-src` needs
+      nothing: it already allows `https:` wholesale, which is what lets the
+      model weights behind huggingface.co download.
     -->
     <meta
       http-equiv="Content-Security-Policy"
@@ -53,14 +63,20 @@
         object-src 'none';
         frame-src https://www.youtube-nocookie.com https://www.youtube.com https://player.vimeo.com http://localhost:8787 http://127.0.0.1:8787;
         img-src 'self' data: blob: http://localhost:8787 http://127.0.0.1:8787;
-        script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:;
+        script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net;
         style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
         font-src 'self' data: https://fonts.gstatic.com;
         connect-src 'self' data: blob: https: ws: wss: http://localhost:8787 http://127.0.0.1:8787;
-        worker-src 'self' blob:;
+        worker-src 'self' blob: https://cdn.jsdelivr.net;
         media-src 'self' data: blob: http://localhost:8787 http://127.0.0.1:8787;
       "
     />
+
+    <!--
+      Named explicitly so the browser asks for the mark that exists rather than
+      falling back to /favicon.ico, which is a 404 on every single page load.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 
     <title>K.I.N.G.</title>
   </head>

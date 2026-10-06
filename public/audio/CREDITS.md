@@ -38,4 +38,8 @@ Library.
 The short interface sounds — wake pips, tool ticks, the completion chime — are
 not files. They're synthesised in Web Audio in `src/lib/sfx.ts`, so there's
 nothing to download and nothing to credit. Drop `wake.mp3`, `listen.mp3`,
-`tool.mp3`, `done.mp3` or `error.mp3` in here to override any of them.
+`tool.mp3`, `done.mp3` or `error.mp3` in here to override any of them, then add
+the cue name to `manifest.json` sitting alongside them — the list is what tells
+the app the file exists. Probing for the file instead would ask the server for
+six things that aren't there, and every 404 lands in the browser console no
+matter how carefully the response is handled.

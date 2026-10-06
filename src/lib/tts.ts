@@ -246,7 +246,7 @@ function pickVoice(): SpeechSynthesisVoice | null {
 export function currentVoiceName(): string {
   if (USE_ELEVENLABS || caps().tts) return 'ElevenLabs'
   if (TTS_ENGINE === 'kokoro' && !kokoro.isUnavailable()) {
-    return KOKORO_VOICE.replace(/^bm_/, '')
+    return KOKORO_VOICE.replace(/^[ab][fm]_/, '')
   }
   return pickVoice()?.name ?? 'default'
 }
@@ -434,6 +434,7 @@ export function createSpeaker(): Speaker {
         await playUrl(url, item.text)
         return
       }
+      if (nativeBroken && BACKEND !== 'bridge') return
 
       const spoke = await speakNative(item.text)
       if (spoke || cancelled) return
@@ -447,7 +448,7 @@ export function createSpeaker(): Speaker {
         nativeBroken = true
         diag.nativeBroken = true
         diag.engine = 'elevenlabs'
-        console.warn('[jarvis] system voice is not producing sound — using the bridge speech proxy from here on')
+        console.warn('[jarvis] system voice is not producing sound — trying the configured cloud speech fallback')
       }
       const rescue = await fetchCloudAudio(item.text).catch(() => null)
       if (rescue && !cancelled) {
@@ -750,6 +751,22 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
     } catch {
       /* fall through */
     }
+  }
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+    if (res.ok) return URL.createObjectURL(await res.blob())
+    if (res.status !== 503) {
+      const message = await res.text()
+      diag.lastError = message || `speech-proxy-${res.status}`
+      console.warn('[jarvis] server speech fallback failed:', diag.lastError)
+    }
+  } catch {
+    /* The serverless speech route may not be present on a static host. */
   }
 
   if (env.elevenKey) {

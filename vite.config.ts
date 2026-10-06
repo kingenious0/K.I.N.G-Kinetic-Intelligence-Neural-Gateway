@@ -7,6 +7,7 @@ import {
   originAllowed,
   pipeToNode,
   proxyChat,
+  proxySpeech,
   readJsonBody,
   readProxyEnv,
   simpleJson,
@@ -40,6 +41,13 @@ function chatProxy(env: ProxyEnv): Plugin {
           }
         })
       })
+      server.middlewares.use('/api/tts', (req: IncomingMessage, res: ServerResponse) => {
+        void handleSpeech(req, res, env).catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : 'Speech request failed.'
+          if (!res.headersSent) simpleJson(res, 502, { error: { message } })
+          else if (!res.writableEnded) res.end()
+        })
+      })
     },
   }
 }
@@ -69,13 +77,40 @@ async function handle(
   await pipeToNode(response, res)
 }
 
+async function handleSpeech(
+  req: IncomingMessage,
+  res: ServerResponse,
+  env: ProxyEnv,
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.setHeader('allow', 'POST')
+    simpleJson(res, 405, { error: { message: 'Only POST requests are allowed.' } })
+    return
+  }
+  if (!originAllowed(req.headers.origin, req.headers.host ?? req.headers['x-forwarded-host'])) {
+    simpleJson(res, 403, { error: { message: 'Cross-origin requests are refused.' } })
+    return
+  }
+  await pipeToNode(await proxySpeech(env, await readJsonBody(req)), res)
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // Bare `GROQ_*` names are read here and nowhere else. Vite's own envPrefix
   // stays at its default of `VITE_`, so what this returns never reaches
   // `import.meta.env` — that separation is the entire reason the key cannot
   // end up in the bundle.
-  const proxyEnv = readProxyEnv(loadEnv(mode, process.cwd(), ['VITE_', 'GROQ_']))
+  const proxyEnv = readProxyEnv(
+    loadEnv(mode, process.cwd(), [
+      'VITE_',
+      'GROQ_',
+      'TAVILY_API_KEY',
+      'GITHUB_TOKEN',
+      'ELEVENLABS_API_KEY',
+      'ELEVENLABS_VOICE_ID',
+      'JARVIS_VOICE_ID',
+    ]),
+  )
 
   return {
     plugins: [react(), chatProxy(proxyEnv)],

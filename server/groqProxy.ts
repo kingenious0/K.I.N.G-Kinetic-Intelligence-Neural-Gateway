@@ -47,14 +47,52 @@ const FALLBACK_MODEL = 'openai/gpt-oss-20b'
 const MAX_MESSAGES = 400
 const MAX_TOOLS = 32
 const MAX_BODY_BYTES = 1_000_000
+const MAX_SERVER_TOOL_ROUNDS = 4
 
 const MESSAGE_KEYS = new Set(['role', 'content', 'tool_call_id', 'tool_calls'])
-const TOOL_CHOICES = new Set(['auto', 'none', 'required'])
+
+export const KING_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'search_web',
+      description: 'Search the live web for real-time information or documentation.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: 'A concise web search query.' } },
+        required: ['query'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'fork_repository',
+      description: "Fork a GitHub repository into the account authorized by GITHUB_TOKEN.",
+      parameters: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', description: 'GitHub repository owner.' },
+          repo: { type: 'string', description: 'GitHub repository name.' },
+        },
+        required: ['owner', 'repo'],
+        additionalProperties: false,
+      },
+    },
+  },
+]
+
+const KING_TOOL_NAMES = new Set(['search_web', 'fork_repository'])
 
 export type ProxyEnv = {
   apiKey: string | undefined
   primary: string
   fallback: string
+  tavilyApiKey?: string
+  githubToken?: string
+  elevenLabsApiKey?: string
+  elevenLabsVoiceId?: string
 }
 
 type Problem = { error: string }
@@ -92,6 +130,11 @@ export function readProxyEnv(raw: Record<string, string | undefined>): ProxyEnv 
     primary: clean(raw.GROQ_MODEL) ?? clean(raw.VITE_GROQ_MODEL) ?? PRIMARY_MODEL,
     fallback:
       clean(raw.GROQ_MODEL_FALLBACK) ?? clean(raw.VITE_GROQ_MODEL_FALLBACK) ?? FALLBACK_MODEL,
+    tavilyApiKey: clean(raw.TAVILY_API_KEY),
+    githubToken: clean(raw.GITHUB_TOKEN),
+    elevenLabsApiKey: clean(raw.ELEVENLABS_API_KEY),
+    elevenLabsVoiceId:
+      clean(raw.ELEVENLABS_VOICE_ID) ?? clean(raw.JARVIS_VOICE_ID) ?? 'JBFqnCBsd6RMkjVDRZzb',
   }
 }
 
@@ -164,8 +207,12 @@ export function parseChatRequest(body: unknown): Record<string, unknown> | Probl
     cleanedMessages.push(cleaned)
   }
 
-  const tools = cleanTools(body.tools)
-  if (tools === null) return { error: '`tools` must be an array of function declarations.' }
+  const suppliedTools = cleanTools(body.tools)
+  if (suppliedTools === null) return { error: '`tools` must be an array of function declarations.' }
+  const clientTools = suppliedTools.filter((tool) => {
+    const fn = tool.function
+    return !isPlainObject(fn) || !KING_TOOL_NAMES.has(String(fn.name))
+  })
 
   const request: Record<string, unknown> = {
     messages: cleanedMessages,
@@ -175,12 +222,9 @@ export function parseChatRequest(body: unknown): Record<string, unknown> | Probl
     stream: body.stream !== false,
     temperature: clampNumber(body.temperature, 0, 2, 0.6),
     max_tokens: Math.round(clampNumber(body.max_tokens, 1, 16384, 400)),
-  }
-  // `tool_choice` only makes sense alongside `tools`; Groq rejects one without
-  // the other, and a request that offered no tools has no choice to prefer.
-  if (tools && tools.length > 0) {
-    request.tools = tools
-    request.tool_choice = cleanToolChoice(body.tool_choice)
+    tools: [...clientTools, ...KING_TOOLS],
+    tool_choice: 'auto',
+    parallel_tool_calls: false,
   }
   return request
 }
@@ -217,17 +261,6 @@ function cleanTools(value: unknown): Record<string, unknown>[] | null {
   })
 }
 
-function cleanToolChoice(value: unknown): unknown {
-  if (typeof value === 'string' && TOOL_CHOICES.has(value)) return value
-  if (isPlainObject(value)) {
-    const fn = value.function
-    if (isPlainObject(fn) && typeof fn.name === 'string') {
-      return { type: 'function', function: { name: fn.name } }
-    }
-  }
-  return 'auto'
-}
-
 /** Groq answers 404 for a removed id, and 400/410 with the reason in prose
  *  rather than a code — hence the text as well as the status. */
 function isModelUnavailable(status: number, text: string): boolean {
@@ -259,6 +292,173 @@ async function send(
   })
 }
 
+async function sendWithFallback(env: ProxyEnv, request: Record<string, unknown>): Promise<Response> {
+  const attempts = env.fallback && env.fallback !== env.primary
+    ? [env.primary, env.fallback]
+    : [env.primary]
+
+  let lastStatus = 502
+  let lastMessage = 'Groq did not answer.'
+  for (let i = 0; i < attempts.length; i++) {
+    const model = attempts[i]
+    const upstream = await send(env, model, request)
+    if (upstream.ok) {
+      const headers = new Headers({
+        'content-type': upstream.headers.get('content-type') ?? 'application/json',
+        'cache-control': 'no-store',
+        'x-king-model': model,
+      })
+      if (i > 0) headers.set('x-king-fallback', '1')
+      return new Response(upstream.body, { status: 200, headers })
+    }
+
+    const text = await upstream.text()
+    lastStatus = upstream.status
+    lastMessage = extractMessage(text) ?? `Groq API error (${upstream.status})`
+    if (i + 1 >= attempts.length || !isModelUnavailable(upstream.status, text)) break
+  }
+  return jsonError(lastStatus >= 400 && lastStatus < 600 ? lastStatus : 502, lastMessage)
+}
+
+type GroqToolCall = {
+  id?: string
+  type?: string
+  function?: { name?: string; arguments?: string }
+}
+
+function toolArguments(call: GroqToolCall): Record<string, unknown> | undefined {
+  const raw = call.function?.arguments
+  if (typeof raw !== 'string') return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return isPlainObject(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function executeKingTool(env: ProxyEnv, call: GroqToolCall): Promise<string> {
+  const name = call.function?.name
+  const args = toolArguments(call)
+  if (!args) return 'Tool arguments were not valid JSON.'
+
+  try {
+    if (name === 'search_web') {
+      if (!env.tavilyApiKey) return 'Web search is unconfigured: TAVILY_API_KEY is missing.'
+      const query = typeof args.query === 'string' ? args.query.trim().slice(0, 500) : ''
+      if (!query) return 'A non-empty search query is required.'
+
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ api_key: env.tavilyApiKey, query, max_results: 3 }),
+      })
+      const data: unknown = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        return `Web search failed (${response.status}): ${extractMessage(JSON.stringify(data)) ?? response.statusText}`
+      }
+      const results = isPlainObject(data) && Array.isArray(data.results) ? data.results : []
+      const snippets = results.slice(0, 3).flatMap((result, index) => {
+        if (!isPlainObject(result)) return []
+        const title = typeof result.title === 'string' ? result.title : 'Untitled result'
+        const content = typeof result.content === 'string' ? result.content.slice(0, 700) : ''
+        const url = typeof result.url === 'string' ? result.url : ''
+        return [`${index + 1}. ${title}\n${content}\n${url}`.trim()]
+      })
+      return snippets.length ? snippets.join('\n\n') : 'No web results were found.'
+    }
+
+    if (name === 'fork_repository') {
+      if (!env.githubToken) return 'GitHub actions are unconfigured: GITHUB_TOKEN is missing.'
+      const owner = typeof args.owner === 'string' ? args.owner.trim() : ''
+      const repo = typeof args.repo === 'string' ? args.repo.trim() : ''
+      const validSegment = /^[A-Za-z0-9_.-]{1,100}$/
+      if (!validSegment.test(owner) || owner === '.' || owner === '..' ||
+          !validSegment.test(repo) || repo === '.' || repo === '..') {
+        return 'A valid GitHub owner and repository name are required.'
+      }
+
+      const response = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/forks`,
+        {
+          method: 'POST',
+          headers: {
+            accept: 'application/vnd.github+json',
+            authorization: `Bearer ${env.githubToken}`,
+            'content-type': 'application/json',
+            'x-github-api-version': '2022-11-28',
+            'user-agent': 'KING-serverless-tools',
+          },
+          body: '{}',
+        },
+      )
+      const data: unknown = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const message = isPlainObject(data) && typeof data.message === 'string'
+          ? data.message
+          : response.statusText
+        return `GitHub fork failed (${response.status}): ${message}`
+      }
+      return isPlainObject(data) && typeof data.html_url === 'string'
+        ? `Fork created: ${data.html_url}`
+        : 'GitHub accepted the fork request.'
+    }
+
+    return `Unknown server tool: ${String(name ?? '')}`
+  } catch (err) {
+    return `Tool request failed: ${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
+function completionResponse(
+  upstream: Response,
+  completion: Record<string, unknown>,
+  stream: boolean,
+): Response {
+  const headers = new Headers(upstream.headers)
+  headers.set('cache-control', 'no-store')
+  if (!stream) {
+    headers.set('content-type', 'application/json')
+    return new Response(JSON.stringify(completion), { status: 200, headers })
+  }
+
+  headers.set('content-type', 'text/event-stream; charset=utf-8')
+  const encoder = new TextEncoder()
+  const choice = Array.isArray(completion.choices) && isPlainObject(completion.choices[0])
+    ? completion.choices[0]
+    : {}
+  const message = isPlainObject(choice.message) ? choice.message : {}
+  const id = typeof completion.id === 'string' ? completion.id : `king-${Date.now()}`
+  const model = typeof completion.model === 'string' ? completion.model : ''
+  const created = typeof completion.created === 'number' ? completion.created : Math.floor(Date.now() / 1000)
+  const emit = (delta: Record<string, unknown>, finishReason: unknown = null) =>
+    `data: ${JSON.stringify({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    })}\n\n`
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(emit({ role: 'assistant' })))
+      if (typeof message.content === 'string') {
+        for (let offset = 0; offset < message.content.length; offset += 48) {
+          controller.enqueue(encoder.encode(emit({ content: message.content.slice(offset, offset + 48) })))
+        }
+      }
+      if (Array.isArray(message.tool_calls) && message.tool_calls.length) {
+        controller.enqueue(encoder.encode(emit({ tool_calls: message.tool_calls })))
+      }
+      controller.enqueue(encoder.encode(emit({}, choice.finish_reason ?? 'stop')))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  })
+  return new Response(body, { status: 200, headers })
+}
+
 /**
  * One call, with the fallback decided here rather than by the page.
  *
@@ -281,39 +481,112 @@ export async function proxyChat(env: ProxyEnv, body: unknown): Promise<Response>
   const request = parseChatRequest(body)
   if (isProblem(request)) return jsonError(400, request.error)
 
-  const attempts = env.fallback && env.fallback !== env.primary
-    ? [env.primary, env.fallback]
-    : [env.primary]
+  const wantsStream = request.stream === true
+  const messages = request.messages as Record<string, unknown>[]
+  let nextRequest: Record<string, unknown> = { ...request, stream: false }
 
-  let lastStatus = 502
-  let lastMessage = 'Groq did not answer.'
+  for (let round = 0; ; round++) {
+    const upstream = await sendWithFallback(env, nextRequest)
+    if (!upstream.ok) return upstream
 
-  for (let i = 0; i < attempts.length; i++) {
-    const model = attempts[i]
-    const upstream = await send(env, model, request)
+    let completion: unknown
+    try {
+      completion = await upstream.json()
+    } catch {
+      return jsonError(502, 'Groq returned an invalid chat completion.')
+    }
+    if (!isPlainObject(completion)) return jsonError(502, 'Groq returned an invalid chat completion.')
 
-    if (upstream.ok) {
-      const headers = new Headers({
-        'content-type':
-          upstream.headers.get('content-type') ??
-          (request.stream ? 'text/event-stream' : 'application/json'),
-        'cache-control': 'no-store',
-        'x-king-model': model,
-      })
-      if (i > 0) headers.set('x-king-fallback', '1')
-      return new Response(upstream.body, { status: 200, headers })
+    const choice = Array.isArray(completion.choices) && isPlainObject(completion.choices[0])
+      ? completion.choices[0]
+      : {}
+    const assistant = isPlainObject(choice.message) ? choice.message : {}
+    const calls = Array.isArray(assistant.tool_calls)
+      ? assistant.tool_calls.filter(isPlainObject) as GroqToolCall[]
+      : []
+    const serverCalls = calls.filter((call) => KING_TOOL_NAMES.has(String(call.function?.name ?? '')))
+
+    if (round >= MAX_SERVER_TOOL_ROUNDS && serverCalls.length) {
+      return jsonError(502, 'Groq exceeded the server tool-call limit for this turn.')
     }
 
-    const text = await upstream.text()
-    lastStatus = upstream.status
-    lastMessage = extractMessage(text) ?? `Groq API error (${upstream.status})`
-    if (i + 1 >= attempts.length || !isModelUnavailable(upstream.status, text)) break
+    // Client-owned UI/bridge tools remain visible to the frontend's existing
+    // tool executor. parallel_tool_calls=false avoids mixing those with a
+    // privileged server action in the same completion.
+    if (!serverCalls.length || serverCalls.length !== calls.length) {
+      return completionResponse(upstream, completion, wantsStream)
+    }
+
+    const toolMessages = serverCalls.map((call, index) => ({
+      id: typeof call.id === 'string' ? call.id : `king_call_${round}_${index}`,
+      type: 'function',
+      function: {
+        name: String(call.function?.name ?? ''),
+        arguments: typeof call.function?.arguments === 'string' ? call.function.arguments : '{}',
+      },
+    }))
+    const results = await Promise.all(serverCalls.map(async (call, index) => ({
+      role: 'tool',
+      tool_call_id: toolMessages[index].id,
+      content: await executeKingTool(env, call),
+    })))
+    messages.push({ role: 'assistant', content: assistant.content ?? null, tool_calls: toolMessages })
+    messages.push(...results)
+
+    nextRequest = { ...nextRequest, messages, stream: false }
+    if (round + 1 >= MAX_SERVER_TOOL_ROUNDS) {
+      nextRequest.tool_choice = 'none'
+    }
+  }
+}
+
+/** Server-side voice fallback for standalone deployments without the bridge. */
+export async function proxySpeech(env: ProxyEnv, body: unknown): Promise<Response> {
+  if (!env.elevenLabsApiKey) {
+    return jsonError(503, 'Speech is unconfigured: ELEVENLABS_API_KEY is missing.')
+  }
+  if (!isPlainObject(body) || typeof body.text !== 'string') {
+    return jsonError(400, '`text` must be a string.')
+  }
+  const text = body.text.trim()
+  if (!text || text.length > 4000) return jsonError(400, '`text` must contain 1 to 4000 characters.')
+
+  const voiceId = env.elevenLabsVoiceId ?? 'JBFqnCBsd6RMkjVDRZzb'
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(voiceId)) {
+    return jsonError(500, 'ELEVENLABS_VOICE_ID is invalid.')
   }
 
-  // Upstream errors are already `{ error: { message } }`, but a proxy that can
-  // emit any other shape makes every client write two error paths. One shape,
-  // always.
-  return jsonError(lastStatus >= 400 && lastStatus < 600 ? lastStatus : 502, lastMessage)
+  let upstream: Response
+  try {
+    upstream = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_22050_32&optimize_streaming_latency=3`,
+      {
+        method: 'POST',
+        headers: {
+          'xi-api-key': env.elevenLabsApiKey,
+          'content-type': 'application/json',
+          accept: 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text,
+          model_id: 'eleven_flash_v2_5',
+          voice_settings: { stability: 0.4, similarity_boost: 0.75, speed: 1.05 },
+        }),
+      },
+    )
+  } catch (err) {
+    return jsonError(502, err instanceof Error ? err.message : 'Speech provider request failed.')
+  }
+
+  if (!upstream.ok) {
+    const details = await upstream.text()
+    return jsonError(upstream.status, extractMessage(details) ?? `ElevenLabs error (${upstream.status}).`)
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: { 'content-type': upstream.headers.get('content-type') ?? 'audio/mpeg', 'cache-control': 'no-store' },
+  })
 }
 
 function extractMessage(text: string): string | undefined {

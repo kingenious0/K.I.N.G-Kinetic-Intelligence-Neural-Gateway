@@ -40,9 +40,10 @@ export let lastError = ''
 /**
  * British male voices, in the order they suit the character. George is the
  * closest to a measured RP baritone; Fable is warmer, Lewis lower, Daniel
- * brighter.
+ * brighter. Bella is an American option; Kokoro selects the phonemizer dialect
+ * from the voice prefix (`a` -> en-us, `b` -> English).
  */
-export const VOICES = ['bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel'] as const
+export const VOICES = ['bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel', 'af_bella'] as const
 
 /**
  * A voice id the model doesn't carry throws inside generate(), once per

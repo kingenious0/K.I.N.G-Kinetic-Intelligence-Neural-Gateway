@@ -266,6 +266,10 @@ one implementation.
 | `GROQ_MODEL`                | Vercel   | Primary model. Default `qwen/qwen3.8-27b`     |
 | `GROQ_MODEL_FALLBACK`       | Vercel   | Used when the primary id is retired           |
 | `VITE_GROQ_MODEL`           | Vercel   | The same model, for the HUD rail label        |
+| `TAVILY_API_KEY`            | Vercel   | Enables live web search through `search_web`  |
+| `GITHUB_TOKEN`               | Vercel   | Enables `fork_repository` as the token owner  |
+| `ELEVENLABS_API_KEY`         | Vercel   | Optional server-side `/api/tts` fallback     |
+| `ELEVENLABS_VOICE_ID`        | Vercel   | Optional voice id for the speech fallback    |
 
 Deploy it with no build command, framework preset or output directory to
 configure: Vercel detects Vite, runs `npm run build`, serves `dist/`, and turns

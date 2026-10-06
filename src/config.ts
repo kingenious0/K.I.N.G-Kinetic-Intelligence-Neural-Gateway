@@ -181,24 +181,27 @@ export const USE_ELEVENLABS = flag(
  *     quantisation often silently falls back to CPU on WebGPU, which is the
  *     likely cause.
  */
-export const TTS_ENGINE: 'kokoro' | 'system' = choice(
+const configuredTtsEngine = choice(
   'VITE_TTS_ENGINE',
   import.meta.env.VITE_TTS_ENGINE,
-  ['kokoro', 'system'] as const,
+  ['kokoro', 'system', 'browser'] as const,
   'system',
 )
+export const TTS_ENGINE: 'kokoro' | 'system' =
+  configuredTtsEngine === 'browser' ? 'system' : configuredTtsEngine
 
 /**
- * Which Kokoro voice. All four are British male:
+ * Which Kokoro voice:
  *   bm_george — measured RP baritone, closest to the character
  *   bm_fable  — warmer
  *   bm_lewis  — lower
  *   bm_daniel — brighter
+ *   af_bella  — American female; selects Kokoro's en-us phonemizer dialect
  */
 export const KOKORO_VOICE = choice(
   'VITE_KOKORO_VOICE',
   import.meta.env.VITE_KOKORO_VOICE,
-  ['bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel'] as const,
+  ['bm_george', 'bm_fable', 'bm_lewis', 'bm_daniel', 'af_bella'] as const,
   'bm_george',
 )
 

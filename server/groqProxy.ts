@@ -39,12 +39,13 @@ const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions'
  * hardcoded id is a time bomb, and the fallback below is what turns that into a
  * footnote instead of an outage.
  */
-const PRIMARY_MODEL = 'qwen/qwen3.8-27b'
-const FALLBACK_MODEL = 'openai/gpt-oss-20b'
+const PRIMARY_MODEL = 'llama-3.3-70b-versatile'
+const FALLBACK_MODEL = 'llama-3.1-8b-instant'
 
 /** Generous enough for a long turn, small enough that one request cannot be a
  *  denial-of-service on somebody else's turn. */
 const MAX_MESSAGES = 400
+const MAX_CONTEXT_TURNS = 4
 const MAX_TOOLS = 32
 const MAX_BODY_BYTES = 1_000_000
 const MAX_SERVER_TOOL_ROUNDS = 4
@@ -144,8 +145,22 @@ export function readProxyEnv(raw: Record<string, string | undefined>): ProxyEnv 
  * an answer rather than a fault. Only a network failure throws, which the
  * client swallows.
  */
-export function healthReport(env: ProxyEnv): { ok: boolean; hasKey: boolean } {
-  return { ok: true, hasKey: !!env.apiKey }
+export function healthReport(env: ProxyEnv): { ok: boolean; hasKey: boolean; hasSpeech: boolean } {
+  return { ok: true, hasKey: !!env.apiKey, hasSpeech: !!env.elevenLabsApiKey }
+}
+
+/** Keep system instructions and only the newest user-led conversation turns. */
+export function trimConversation(messages: Record<string, unknown>[]): Record<string, unknown>[] {
+  const system = messages.filter((message) => message.role === 'system')
+  const conversation = messages.filter((message) => message.role !== 'system')
+  const userTurns = conversation.reduce<number[]>((indices, message, index) => {
+    if (message.role === 'user') indices.push(index)
+    return indices
+  }, [])
+  const firstKeptTurn = userTurns.length > MAX_CONTEXT_TURNS
+    ? userTurns[userTurns.length - MAX_CONTEXT_TURNS]
+    : 0
+  return [...system, ...conversation.slice(firstKeptTurn)]
 }
 
 /**
@@ -215,7 +230,7 @@ export function parseChatRequest(body: unknown): Record<string, unknown> | Probl
   })
 
   const request: Record<string, unknown> = {
-    messages: cleanedMessages,
+    messages: trimConversation(cleanedMessages),
     // Never false unless the client asked for it: a streamed answer is what
     // makes the reply feel spoken, and a non-streaming one changes the wire
     // format the client parses.
@@ -315,7 +330,10 @@ async function sendWithFallback(env: ProxyEnv, request: Record<string, unknown>)
     const text = await upstream.text()
     lastStatus = upstream.status
     lastMessage = extractMessage(text) ?? `Groq API error (${upstream.status})`
-    if (i + 1 >= attempts.length || !isModelUnavailable(upstream.status, text)) break
+    if (
+      i + 1 >= attempts.length ||
+      (upstream.status !== 429 && !isModelUnavailable(upstream.status, text))
+    ) break
   }
   return jsonError(lastStatus >= 400 && lastStatus < 600 ? lastStatus : 502, lastMessage)
 }
@@ -462,12 +480,10 @@ function completionResponse(
 /**
  * One call, with the fallback decided here rather than by the page.
  *
- * The first attempt is always the primary. A second attempt happens only when
- * the first failed *because the model is gone* — a rate limit or a malformed
- * request would fail identically on the fallback, and retrying it would only
- * double the wait before the same error. The model that finally answered is
- * carried in `x-king-model`, and `x-king-fallback: 1` says it was not the one
- * that was asked for, which is the only case worth showing to a person.
+ * The first attempt is always the primary. A second attempt happens when the
+ * primary is gone or rate-limited; other request errors are not retried. The
+ * model that answered is carried in `x-king-model`, and `x-king-fallback: 1`
+ * marks a successful fallback.
  */
 export async function proxyChat(env: ProxyEnv, body: unknown): Promise<Response> {
   if (!env.apiKey) {

@@ -102,6 +102,8 @@ if (typeof window !== 'undefined') {
  * the bridge's speech proxy instead, which holds an ElevenLabs key already.
  */
 let nativeBroken = false
+let serverSpeechConfigured: boolean | null = null
+let serverSpeechProbe: Promise<boolean> | null = null
 
 let speakingAt = 0
 
@@ -753,20 +755,21 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
     }
   }
 
-  try {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
-    if (res.ok) return URL.createObjectURL(await res.blob())
-    if (res.status !== 503) {
+  if (await hasServerSpeech()) {
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (res.ok) return URL.createObjectURL(await res.blob())
       const message = await res.text()
       diag.lastError = message || `speech-proxy-${res.status}`
       console.warn('[jarvis] server speech fallback failed:', diag.lastError)
+      serverSpeechConfigured = false
+    } catch {
+      serverSpeechConfigured = false
     }
-  } catch {
-    /* The serverless speech route may not be present on a static host. */
   }
 
   if (env.elevenKey) {
@@ -798,4 +801,23 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
   }
 
   return null
+}
+
+function hasServerSpeech(): Promise<boolean> {
+  if (serverSpeechConfigured !== null) return Promise.resolve(serverSpeechConfigured)
+  if (!serverSpeechProbe) {
+    serverSpeechProbe = fetch('/api/chat')
+      .then(async (response) => {
+        if (!response.ok) return false
+        const health: unknown = await response.json()
+        return !!health && typeof health === 'object' &&
+          (health as { hasSpeech?: unknown }).hasSpeech === true
+      })
+      .catch(() => false)
+      .then((available) => {
+        serverSpeechConfigured = available
+        return available
+      })
+  }
+  return serverSpeechProbe
 }

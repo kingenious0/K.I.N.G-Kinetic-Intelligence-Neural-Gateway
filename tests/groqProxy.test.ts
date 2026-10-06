@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { proxyChat } from '../server/groqProxy.js'
+import { healthReport, parseChatRequest, proxyChat, readProxyEnv } from '../server/groqProxy.js'
 
 type Mode = 'search_web' | 'fork_repository'
 
@@ -117,3 +117,73 @@ for (const mode of ['search_web', 'fork_repository'] as const) {
     }
   })
 }
+
+test('chat requests retain only four recent user turns and keep system prompts', () => {
+  const messages = [
+    { role: 'system', content: 'Always answer as KING.' },
+    ...Array.from({ length: 6 }, (_, index) => [
+      { role: 'user', content: `user-${index + 1}` },
+      { role: 'assistant', content: `assistant-${index + 1}` },
+    ]).flat(),
+  ]
+  const request = parseChatRequest({ messages }) as { messages: Array<{ content: string }> }
+  assert.deepEqual(request.messages.map((message) => message.content), [
+    'Always answer as KING.',
+    'user-3', 'assistant-3',
+    'user-4', 'assistant-4',
+    'user-5', 'assistant-5',
+    'user-6', 'assistant-6',
+  ])
+})
+
+test('a Groq 429 retries on the configured fallback model', async () => {
+  const originalFetch = globalThis.fetch
+  const models: string[] = []
+  globalThis.fetch = async (_input, init) => {
+    const payload = JSON.parse(String(init?.body)) as { model: string }
+    models.push(payload.model)
+    if (models.length === 1) {
+      return new Response(JSON.stringify({ error: { message: 'rate limit' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    return jsonResponse({
+      id: 'fallback-answer',
+      model: payload.model,
+      created: 1,
+      choices: [{ message: { role: 'assistant', content: 'Answered on fallback.' }, finish_reason: 'stop' }],
+    })
+  }
+
+  try {
+    const response = await proxyChat(
+      { apiKey: 'groq-test', primary: 'llama-70b', fallback: 'llama-8b' },
+      { messages: [{ role: 'user', content: 'Reply.' }], tools: [], stream: true },
+    )
+    assert.equal(response.status, 200)
+    assert.deepEqual(models, ['llama-70b', 'llama-8b'])
+    assert.equal(response.headers.get('x-king-fallback'), '1')
+    assert.match(await response.text(), /Answered on fallback\./)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('health reports speech availability without exposing provider credentials', () => {
+  assert.deepEqual(
+    healthReport({
+      apiKey: 'groq-secret',
+      primary: 'llama-3.3-70b-versatile',
+      fallback: 'llama-3.1-8b-instant',
+      elevenLabsApiKey: 'speech-secret',
+    }),
+    { ok: true, hasKey: true, hasSpeech: true },
+  )
+})
+
+test('default Groq models use the Llama primary and fallback', () => {
+  const env = readProxyEnv({})
+  assert.equal(env.primary, 'llama-3.3-70b-versatile')
+  assert.equal(env.fallback, 'llama-3.1-8b-instant')
+})

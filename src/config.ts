@@ -76,7 +76,7 @@ export const env = {
  * difference on the first turn.
  */
 export const GROQ_MODEL =
-  str(import.meta.env.VITE_GROQ_MODEL) ?? 'qwen/qwen3.8-27b'
+  str(import.meta.env.VITE_GROQ_MODEL) ?? 'llama-3.3-70b-versatile'
 
 /** `claude-opus-5` is the strongest model; `claude-sonnet-5` trades a little
  *  quality for lower latency if you find responses feel slow on camera. */

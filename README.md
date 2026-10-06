@@ -263,9 +263,10 @@ one implementation.
 | --------------------------- | -------- | --------------------------------------------- |
 | `VITE_BACKEND`              | Vercel   | `groq` — selects standalone mode              |
 | `GROQ_API_KEY`              | Vercel   | **Server side only.** The proxy's credential  |
-| `GROQ_MODEL`                | Vercel   | Primary model. Default `qwen/qwen3.8-27b`     |
-| `GROQ_MODEL_FALLBACK`       | Vercel   | Used when the primary id is retired           |
+| `GROQ_MODEL`                | Vercel   | Primary model. Default `llama-3.3-70b-versatile` |
+| `GROQ_MODEL_FALLBACK`       | Vercel   | Fallback on retired model or 429; default `llama-3.1-8b-instant` |
 | `VITE_GROQ_MODEL`           | Vercel   | The same model, for the HUD rail label        |
+| `VITE_TTS_ENGINE`           | Vercel   | Set to `browser` to bypass Kokoro and use native speech |
 | `TAVILY_API_KEY`            | Vercel   | Enables live web search through `search_web`  |
 | `GITHUB_TOKEN`               | Vercel   | Enables `fork_repository` as the token owner  |
 | `ELEVENLABS_API_KEY`         | Vercel   | Optional server-side `/api/tts` fallback     |
@@ -277,9 +278,8 @@ configure: Vercel detects Vite, runs `npm run build`, serves `dist/`, and turns
 
 Two things the proxy does on its own, so you do not have to configure them:
 
-- **Fallback.** Groq retires model ids without notice (`qwen-2.5-32b` was the
-  original default and is now decommissioned). If the primary is refused, the
-  proxy retries once with the fallback and answers `x-king-model` /
+- **Fallback.** If Groq retires the primary model or responds with a 429 rate
+  limit, the proxy retries once with the smaller fallback model and answers `x-king-model` /
   `x-king-fallback: 1`, which the page shows on the tool badge. One retry, not
   a loop — a rate limit or a malformed request would fail the same way twice.
 - **Origin gate.** The endpoint holds a paid credential and cannot carry a

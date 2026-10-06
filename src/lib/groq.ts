@@ -277,9 +277,12 @@ export async function ask(
   const usedTools: string[] = []
   let fullText = ''
 
+  const conversation = history.filter((m) => m.content && (m.role === 'user' || m.role === 'assistant'))
+  const userTurnIndexes = conversation.flatMap((message, index) => message.role === 'user' ? [index] : [])
+  const firstRecentTurn = userTurnIndexes.length > 4 ? userTurnIndexes[userTurnIndexes.length - 4] : 0
   const messages: any[] = [
     { role: 'system', content: SYSTEM_PROMPT },
-    ...history.filter((m) => m.content && (m.role === 'user' || m.role === 'assistant')),
+    ...conversation.slice(firstRecentTurn),
   ]
 
   async function callApi(currentMessages: any[]): Promise<string> {
